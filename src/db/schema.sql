@@ -1,0 +1,710 @@
+-- ===========================================================================
+-- AfriMesh Commerce Platform / Project Nexus
+-- Proximity Commerce & Payment Infrastructure Platform (PCPIP)
+--
+-- Source of truth for the relational schema. Plain PostgreSQL: runs unchanged
+-- on the embedded PGlite dev database and on a managed PostgreSQL server.
+--
+-- Module boundaries (SAD "Database Architecture" / PRD CTO note) are expressed
+-- as table groups. Each group is owned by exactly one module in src/modules/*
+-- and is only reachable through that module's service interface, so a group can
+-- later be lifted into its own service + database without touching callers.
+--
+--   identity      users, sessions, otp_codes
+--   users/orgs    organisations, organisation_members
+--   catalog       categories, brands, products
+--   inventory     inventory_items, inventory_batches, stock_reservations,
+--                 inventory_ledger
+--   orders        orders, order_items, order_events
+--   payments      payments
+--   wallet        wallets, ledger_transactions, ledger_entries
+--   logistics     deliveries
+--   notifications notifications
+--   analytics     search_queries, product_views, ratings, favourites
+--   platform      event_log, ranking_weights, platform_settings, fraud_alerts
+--
+-- MONEY: every monetary column is a BIGINT in the currency's *minor unit*
+-- (kobo for NGN). Integers only - required for the double-entry wallet ledger
+-- to balance exactly (SAD "Wallet Architecture").
+-- ===========================================================================
+
+-- ---------------------------------------------------------------------------
+-- Enumerations
+-- ---------------------------------------------------------------------------
+
+-- Supply-chain tier. Ordinal ordering encodes the PRD business rules:
+-- warehouses supply merchants, merchants supply outlets, outlets supply
+-- consumers. A buyer may only purchase from the tier directly above it.
+CREATE TYPE org_type AS ENUM (
+  'manufacturer',   -- tier 1
+  'warehouse',      -- tier 2  (dealer warehouse)
+  'merchant',       -- tier 3  (wholesaler)
+  'outlet',         -- tier 4  (neighbourhood retailer)
+  'logistics'       -- cross-cutting, not a supply tier
+);
+
+-- RBAC roles, SAD "Authentication & Identity"
+CREATE TYPE user_role AS ENUM (
+  'consumer',
+  'outlet',
+  'merchant',
+  'warehouse',
+  'manufacturer',
+  'delivery_partner',
+  'platform_admin',
+  'super_admin',
+  'auditor'
+);
+
+CREATE TYPE account_status  AS ENUM ('pending', 'active', 'suspended', 'rejected');
+CREATE TYPE verify_status   AS ENUM ('unverified', 'pending', 'verified', 'rejected');
+CREATE TYPE product_status  AS ENUM ('draft', 'active', 'blocked');
+
+CREATE TYPE order_status AS ENUM (
+  'pending_payment',
+  'confirmed',
+  'preparing',
+  'dispatched',
+  'delivered',
+  'completed',
+  'cancelled',
+  'refunded'
+);
+
+CREATE TYPE payment_status AS ENUM ('pending', 'succeeded', 'failed', 'refunded');
+CREATE TYPE payment_method AS ENUM ('wallet', 'bank_transfer', 'card', 'ussd', 'qr');
+
+CREATE TYPE fulfilment_method AS ENUM ('pickup', 'delivery');
+
+-- Inventory movements, from the Inventory Recommendation doc "Inventory Ledger"
+CREATE TYPE movement_type AS ENUM (
+  'received',
+  'transferred',
+  'sale',
+  'return',
+  'adjustment',
+  'damage',
+  'expiry',
+  'reserved',
+  'released'
+);
+
+CREATE TYPE reservation_status AS ENUM ('held', 'consumed', 'released', 'expired');
+
+CREATE TYPE ledger_direction AS ENUM ('debit', 'credit');
+
+CREATE TYPE ledger_txn_type AS ENUM (
+  'deposit',
+  'withdrawal',
+  'transfer',
+  'order_payment',
+  'settlement',
+  'platform_fee',
+  'refund',
+  'escrow_hold',
+  'escrow_release',
+  'cashback'
+);
+
+CREATE TYPE notification_channel AS ENUM ('in_app', 'push', 'sms', 'email');
+CREATE TYPE notification_status  AS ENUM ('queued', 'sent', 'failed');
+
+CREATE TYPE delivery_status AS ENUM (
+  'unassigned', 'assigned', 'picked_up', 'in_transit', 'delivered', 'failed'
+);
+
+-- Which ranking model a weight belongs to (SAD "Recommendation Engine")
+CREATE TYPE ranking_scope AS ENUM ('consumer', 'outlet', 'merchant');
+
+-- ---------------------------------------------------------------------------
+-- MODULE: identity
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE users (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  full_name          TEXT        NOT NULL,
+  phone              TEXT        UNIQUE,
+  email              TEXT        UNIQUE,
+  password_hash      TEXT,
+  role               user_role   NOT NULL DEFAULT 'consumer',
+  status             account_status NOT NULL DEFAULT 'active',
+  phone_verified     BOOLEAN     NOT NULL DEFAULT FALSE,
+  email_verified     BOOLEAN     NOT NULL DEFAULT FALSE,
+  -- Trust score, 0..100. Feeds the recommendation engine's trust factor.
+  trust_score        NUMERIC(5,2) NOT NULL DEFAULT 50,
+  default_lat        DOUBLE PRECISION,
+  default_lng        DOUBLE PRECISION,
+  default_address    TEXT,
+  city               TEXT,
+  state              TEXT,
+  country            TEXT        NOT NULL DEFAULT 'NG',
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_login_at      TIMESTAMPTZ,
+  CONSTRAINT users_contact_present CHECK (phone IS NOT NULL OR email IS NOT NULL)
+);
+
+CREATE INDEX users_role_idx ON users (role);
+
+CREATE TABLE sessions (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash   TEXT NOT NULL UNIQUE,
+  user_agent   TEXT,
+  ip_address   TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at   TIMESTAMPTZ NOT NULL,
+  revoked_at   TIMESTAMPTZ
+);
+
+CREATE INDEX sessions_user_idx ON sessions (user_id);
+
+-- Phone + OTP login (SAD "Authentication Methods"). Codes are hashed at rest.
+CREATE TABLE otp_codes (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  destination  TEXT NOT NULL,
+  channel      notification_channel NOT NULL DEFAULT 'sms',
+  code_hash    TEXT NOT NULL,
+  purpose      TEXT NOT NULL DEFAULT 'login',
+  attempts     INTEGER NOT NULL DEFAULT 0,
+  expires_at   TIMESTAMPTZ NOT NULL,
+  consumed_at  TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX otp_destination_idx ON otp_codes (destination, purpose);
+
+-- ---------------------------------------------------------------------------
+-- MODULE: users / organisations
+-- Business identity for every non-consumer participant.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE organisations (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name                TEXT      NOT NULL,
+  slug                TEXT      NOT NULL UNIQUE,
+  type                org_type  NOT NULL,
+  -- Denormalised tier ordinal so the supply-chain rule is a cheap integer
+  -- comparison in SQL: a buyer at tier N may only buy from tier N-1.
+  tier_level          INTEGER   NOT NULL,
+  owner_user_id       UUID      REFERENCES users(id) ON DELETE SET NULL,
+  registration_number TEXT,
+  status              account_status NOT NULL DEFAULT 'pending',
+  verification        verify_status  NOT NULL DEFAULT 'unverified',
+
+  -- Location-aware inventory (Inventory doc §6). Every org is a stock location.
+  lat                 DOUBLE PRECISION NOT NULL,
+  lng                 DOUBLE PRECISION NOT NULL,
+  address             TEXT,
+  city                TEXT,
+  state               TEXT,
+  country             TEXT      NOT NULL DEFAULT 'NG',
+  delivery_radius_km  NUMERIC(6,2) NOT NULL DEFAULT 5,
+
+  -- Reputation inputs to the recommendation engine.
+  rating              NUMERIC(3,2) NOT NULL DEFAULT 0,
+  rating_count        INTEGER      NOT NULL DEFAULT 0,
+  trust_score         NUMERIC(5,2) NOT NULL DEFAULT 50,
+  fulfilment_rate     NUMERIC(5,2) NOT NULL DEFAULT 100,
+  avg_dispatch_minutes INTEGER     NOT NULL DEFAULT 45,
+
+  phone               TEXT,
+  email               TEXT,
+  logo_url            TEXT,
+  opens_at            TIME,
+  closes_at           TIME,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  verified_at         TIMESTAMPTZ
+);
+
+CREATE INDEX organisations_type_idx    ON organisations (type);
+CREATE INDEX organisations_geo_idx     ON organisations (lat, lng);
+CREATE INDEX organisations_owner_idx   ON organisations (owner_user_id);
+
+CREATE TABLE organisation_members (
+  organisation_id UUID NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
+  user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role_in_org     TEXT NOT NULL DEFAULT 'staff',
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (organisation_id, user_id)
+);
+
+-- ---------------------------------------------------------------------------
+-- MODULE: catalog
+-- Master Product Catalogue - single source of truth (Inventory doc §1).
+-- Sellers reference these records; they never create private duplicates.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE categories (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name       TEXT NOT NULL,
+  slug       TEXT NOT NULL UNIQUE,
+  parent_id  UUID REFERENCES categories(id) ON DELETE SET NULL,
+  icon       TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE brands (
+  id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name     TEXT NOT NULL,
+  slug     TEXT NOT NULL UNIQUE,
+  -- Logo of the company that makes the product. A shop often has no photo of
+  -- the pack but knows the maker, and a recognised brand mark tells a buyer
+  -- more than a pair of initials. Used as the fallback when a product has no
+  -- photo of its own.
+  logo_url TEXT
+);
+
+CREATE TABLE products (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  gtin            TEXT UNIQUE,             -- barcode / GTIN
+  sku             TEXT,
+  name            TEXT NOT NULL,
+  slug            TEXT NOT NULL UNIQUE,
+  brand_id        UUID REFERENCES brands(id) ON DELETE SET NULL,
+  category_id     UUID REFERENCES categories(id) ON DELETE SET NULL,
+  unit_of_measure TEXT NOT NULL DEFAULT 'unit',
+  pack_size       TEXT,
+  description     TEXT,
+  image_url       TEXT,
+  -- Batch/expiry tracking is mandatory for these (Inventory doc §7).
+  requires_batch  BOOLEAN NOT NULL DEFAULT FALSE,
+  status          product_status NOT NULL DEFAULT 'active',
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- Denormalised search document, maintained by the catalog module.
+  search_text     TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX products_category_idx ON products (category_id);
+CREATE INDEX products_brand_idx    ON products (brand_id);
+CREATE INDEX products_gtin_idx     ON products (gtin);
+CREATE INDEX products_search_idx   ON products USING GIN (to_tsvector('simple', search_text));
+
+-- ---------------------------------------------------------------------------
+-- MODULE: inventory  - the Distributed Commerce Inventory Engine
+-- AfriMesh never owns stock; each participant owns its own rows and publishes
+-- availability to the network (Inventory doc "Core Design Principle").
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE inventory_items (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organisation_id UUID NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
+  product_id      UUID NOT NULL REFERENCES products(id)      ON DELETE CASCADE,
+
+  -- Live Stock Engine (Inventory doc §3). Recommendations must read
+  -- qty_available only - never total stock.
+  qty_available   INTEGER NOT NULL DEFAULT 0 CHECK (qty_available >= 0),
+  qty_reserved    INTEGER NOT NULL DEFAULT 0 CHECK (qty_reserved  >= 0),
+  qty_incoming    INTEGER NOT NULL DEFAULT 0 CHECK (qty_incoming  >= 0),
+  qty_sold        INTEGER NOT NULL DEFAULT 0,
+  qty_returned    INTEGER NOT NULL DEFAULT 0,
+  qty_damaged     INTEGER NOT NULL DEFAULT 0,
+  reorder_level   INTEGER NOT NULL DEFAULT 5,
+
+  -- Price Layer (Inventory doc §8), minor units.
+  retail_price      BIGINT,
+  wholesale_price   BIGINT,
+  promo_price       BIGINT,
+  min_order_qty     INTEGER NOT NULL DEFAULT 1 CHECK (min_order_qty >= 1),
+  currency          TEXT NOT NULL DEFAULT 'NGN',
+
+  -- Location-aware inventory (Inventory doc §6): copied from the owning
+  -- organisation so proximity ranking is a single-table scan.
+  lat             DOUBLE PRECISION NOT NULL,
+  lng             DOUBLE PRECISION NOT NULL,
+
+  is_listed       BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  UNIQUE (organisation_id, product_id)
+);
+
+CREATE INDEX inventory_product_idx  ON inventory_items (product_id);
+CREATE INDEX inventory_org_idx      ON inventory_items (organisation_id);
+CREATE INDEX inventory_geo_idx      ON inventory_items (lat, lng);
+CREATE INDEX inventory_avail_idx    ON inventory_items (product_id, qty_available)
+  WHERE is_listed = TRUE;
+
+-- Batch & expiry tracking - medicines, food, agro inputs, chemicals.
+CREATE TABLE inventory_batches (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  inventory_item_id UUID NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
+  batch_number      TEXT NOT NULL,
+  manufactured_on   DATE,
+  expires_on        DATE,
+  qty               INTEGER NOT NULL DEFAULT 0,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX inventory_batches_item_idx   ON inventory_batches (inventory_item_id);
+CREATE INDEX inventory_batches_expiry_idx ON inventory_batches (expires_on);
+
+-- Stock reservation (Inventory doc §4): hold on order, release on payment
+-- failure or TTL expiry. This is what prevents overselling.
+CREATE TABLE stock_reservations (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  inventory_item_id UUID NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
+  order_id          UUID,
+  qty               INTEGER NOT NULL CHECK (qty > 0),
+  status            reservation_status NOT NULL DEFAULT 'held',
+  expires_at        TIMESTAMPTZ NOT NULL,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at       TIMESTAMPTZ
+);
+
+CREATE INDEX reservations_order_idx  ON stock_reservations (order_id);
+CREATE INDEX reservations_expiry_idx ON stock_reservations (status, expires_at);
+
+-- Inventory Ledger (Inventory doc §5): append-only. Never UPDATE or DELETE.
+-- Every movement is traceable and auditable.
+CREATE TABLE inventory_ledger (
+  id                BIGSERIAL PRIMARY KEY,
+  inventory_item_id UUID NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
+  organisation_id   UUID NOT NULL REFERENCES organisations(id)   ON DELETE CASCADE,
+  product_id        UUID NOT NULL REFERENCES products(id)        ON DELETE CASCADE,
+  movement          movement_type NOT NULL,
+  qty_delta         INTEGER NOT NULL,
+  qty_after         INTEGER NOT NULL,
+  reference_type    TEXT,
+  reference_id      TEXT,
+  actor_user_id     UUID REFERENCES users(id) ON DELETE SET NULL,
+  note              TEXT,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX inventory_ledger_item_idx ON inventory_ledger (inventory_item_id, created_at DESC);
+CREATE INDEX inventory_ledger_org_idx  ON inventory_ledger (organisation_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- MODULE: orders
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE orders (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_number      TEXT NOT NULL UNIQUE,
+
+  buyer_user_id     UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  -- NULL for a B2C consumer order; set for every B2B tier order.
+  buyer_org_id      UUID REFERENCES organisations(id) ON DELETE RESTRICT,
+  seller_org_id     UUID NOT NULL REFERENCES organisations(id) ON DELETE RESTRICT,
+
+  -- Tier of the buying side. Enforces the PRD business rules together with
+  -- the seller's tier: buyer_tier must equal seller_tier + 1.
+  buyer_tier        INTEGER NOT NULL,
+  seller_tier       INTEGER NOT NULL,
+
+  status            order_status   NOT NULL DEFAULT 'pending_payment',
+  payment_status    payment_status NOT NULL DEFAULT 'pending',
+
+  subtotal          BIGINT NOT NULL DEFAULT 0,
+  delivery_fee      BIGINT NOT NULL DEFAULT 0,
+  platform_fee      BIGINT NOT NULL DEFAULT 0,
+  total             BIGINT NOT NULL DEFAULT 0,
+  currency          TEXT   NOT NULL DEFAULT 'NGN',
+
+  fulfilment        fulfilment_method NOT NULL DEFAULT 'delivery',
+  delivery_address  TEXT,
+  delivery_lat      DOUBLE PRECISION,
+  delivery_lng      DOUBLE PRECISION,
+  distance_km       NUMERIC(8,2),
+  eta_minutes       INTEGER,
+
+  placed_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  confirmed_at      TIMESTAMPTZ,
+  dispatched_at     TIMESTAMPTZ,
+  delivered_at      TIMESTAMPTZ,
+  completed_at      TIMESTAMPTZ,
+  cancelled_at      TIMESTAMPTZ,
+  cancel_reason     TEXT,
+
+  CONSTRAINT orders_tier_rule CHECK (buyer_tier = seller_tier + 1)
+);
+
+CREATE INDEX orders_buyer_idx       ON orders (buyer_user_id, placed_at DESC);
+CREATE INDEX orders_buyer_org_idx   ON orders (buyer_org_id, placed_at DESC);
+CREATE INDEX orders_seller_idx      ON orders (seller_org_id, placed_at DESC);
+CREATE INDEX orders_status_idx      ON orders (status);
+
+CREATE TABLE order_items (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id          UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  product_id        UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+  inventory_item_id UUID NOT NULL REFERENCES inventory_items(id) ON DELETE RESTRICT,
+  -- Snapshot: an order must render identically forever, even if the catalogue
+  -- entry or the seller's price changes afterwards.
+  name_snapshot     TEXT   NOT NULL,
+  image_snapshot    TEXT,
+  unit_price        BIGINT NOT NULL,
+  qty               INTEGER NOT NULL CHECK (qty > 0),
+  line_total        BIGINT NOT NULL
+);
+
+CREATE INDEX order_items_order_idx ON order_items (order_id);
+
+CREATE TABLE order_events (
+  id          BIGSERIAL PRIMARY KEY,
+  order_id    UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  status      order_status NOT NULL,
+  note        TEXT,
+  actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX order_events_order_idx ON order_events (order_id, created_at);
+
+-- ---------------------------------------------------------------------------
+-- MODULE: wallet - double-entry ledger (SAD "Wallet Architecture")
+-- Invariant: for every ledger_transaction, SUM(debits) = SUM(credits).
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE wallets (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_type   TEXT NOT NULL CHECK (owner_type IN ('user', 'organisation', 'platform')),
+  owner_id     UUID,
+  currency     TEXT NOT NULL DEFAULT 'NGN',
+  -- balance = available + locked. Locked funds are held in escrow.
+  available    BIGINT NOT NULL DEFAULT 0,
+  locked       BIGINT NOT NULL DEFAULT 0,
+  status       account_status NOT NULL DEFAULT 'active',
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (owner_type, owner_id, currency)
+);
+
+CREATE TABLE ledger_transactions (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  reference   TEXT NOT NULL UNIQUE,
+  type        ledger_txn_type NOT NULL,
+  amount      BIGINT NOT NULL,
+  currency    TEXT NOT NULL DEFAULT 'NGN',
+  narration   TEXT,
+  metadata    JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE ledger_entries (
+  id             BIGSERIAL PRIMARY KEY,
+  transaction_id UUID NOT NULL REFERENCES ledger_transactions(id) ON DELETE CASCADE,
+  wallet_id      UUID NOT NULL REFERENCES wallets(id) ON DELETE RESTRICT,
+  direction      ledger_direction NOT NULL,
+  amount         BIGINT NOT NULL CHECK (amount > 0),
+  balance_after  BIGINT NOT NULL,
+  narration      TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX ledger_entries_wallet_idx ON ledger_entries (wallet_id, created_at DESC);
+CREATE INDEX ledger_entries_txn_idx    ON ledger_entries (transaction_id);
+
+-- ---------------------------------------------------------------------------
+-- MODULE: payments
+-- The payment service abstracts providers behind one interface, so a regional
+-- provider can be added without touching business logic (SAD).
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE payments (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id       UUID REFERENCES orders(id) ON DELETE CASCADE,
+  payer_user_id  UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  method         payment_method NOT NULL,
+  provider       TEXT NOT NULL DEFAULT 'mock',
+  provider_ref   TEXT,
+  amount         BIGINT NOT NULL,
+  currency       TEXT NOT NULL DEFAULT 'NGN',
+  status         payment_status NOT NULL DEFAULT 'pending',
+  failure_reason TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at   TIMESTAMPTZ
+);
+
+CREATE INDEX payments_order_idx ON payments (order_id);
+CREATE INDEX payments_payer_idx ON payments (payer_user_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- MODULE: logistics
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE deliveries (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id       UUID NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
+  rider_user_id  UUID REFERENCES users(id) ON DELETE SET NULL,
+  status         delivery_status NOT NULL DEFAULT 'unassigned',
+  pickup_lat     DOUBLE PRECISION,
+  pickup_lng     DOUBLE PRECISION,
+  dropoff_lat    DOUBLE PRECISION,
+  dropoff_lng    DOUBLE PRECISION,
+  distance_km    NUMERIC(8,2),
+  eta_minutes    INTEGER,
+  -- What the rider earns for this job, taken out of the order's delivery fee.
+  -- Fixed when the job is created so the offer a rider accepts cannot change.
+  rider_fee      BIGINT NOT NULL DEFAULT 0,
+  proof_note     TEXT,
+  proof_url      TEXT,
+  assigned_at    TIMESTAMPTZ,
+  picked_up_at   TIMESTAMPTZ,
+  delivered_at   TIMESTAMPTZ,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX deliveries_order_idx  ON deliveries (order_id);
+CREATE INDEX deliveries_rider_idx  ON deliveries (rider_user_id, status);
+CREATE INDEX deliveries_open_idx   ON deliveries (status) WHERE status = 'unassigned';
+
+-- ---------------------------------------------------------------------------
+-- MODULE: messaging
+-- "Customer communication" (PRD Retailer Module).
+--
+-- Conversations are scoped to an order rather than being open-ended. Both
+-- sides then have a shared, verifiable subject, and a stranger cannot message
+-- a shop out of the blue - which is what stops the inbox becoming a spam
+-- channel the moment the network grows.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE conversations (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id        UUID NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
+  buyer_user_id   UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  seller_org_id   UUID NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
+  last_message_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX conversations_buyer_idx  ON conversations (buyer_user_id, last_message_at DESC);
+CREATE INDEX conversations_seller_idx ON conversations (seller_org_id, last_message_at DESC);
+
+CREATE TABLE messages (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  sender_user_id  UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- Which side of the trade sent it, so the thread renders correctly even if
+  -- the seller's staff member who replied is no longer with the business.
+  sender_side     TEXT NOT NULL CHECK (sender_side IN ('buyer', 'seller')),
+  body            TEXT NOT NULL,
+  read_at         TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX messages_conversation_idx ON messages (conversation_id, created_at);
+
+-- ---------------------------------------------------------------------------
+-- MODULE: notifications - event-driven, retryable, multi-channel
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE notifications (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id        UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  channel        notification_channel NOT NULL DEFAULT 'in_app',
+  title          TEXT NOT NULL,
+  body           TEXT NOT NULL,
+  category       TEXT NOT NULL DEFAULT 'general',
+  reference_type TEXT,
+  reference_id   TEXT,
+  status         notification_status NOT NULL DEFAULT 'queued',
+  attempts       INTEGER NOT NULL DEFAULT 0,
+  read_at        TIMESTAMPTZ,
+  sent_at        TIMESTAMPTZ,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX notifications_user_idx ON notifications (user_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- MODULE: analytics / demand intelligence (Inventory doc §9)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE search_queries (
+  id            BIGSERIAL PRIMARY KEY,
+  user_id       UUID REFERENCES users(id) ON DELETE SET NULL,
+  query         TEXT NOT NULL,
+  lat           DOUBLE PRECISION,
+  lng           DOUBLE PRECISION,
+  results_count INTEGER NOT NULL DEFAULT 0,
+  took_ms       INTEGER,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX search_queries_query_idx ON search_queries (query);
+
+CREATE TABLE product_views (
+  id         BIGSERIAL PRIMARY KEY,
+  product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  user_id    UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX product_views_product_idx ON product_views (product_id, created_at DESC);
+
+-- Ratings require a verified transaction (PRD business rule) - hence the
+-- mandatory, unique order reference.
+CREATE TABLE ratings (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id        UUID NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
+  rater_user_id   UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  organisation_id UUID NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
+  stars           INTEGER NOT NULL CHECK (stars BETWEEN 1 AND 5),
+  comment         TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX ratings_org_idx ON ratings (organisation_id);
+
+CREATE TABLE favourites (
+  user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  product_id      UUID REFERENCES products(id) ON DELETE CASCADE,
+  organisation_id UUID REFERENCES organisations(id) ON DELETE CASCADE,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT favourites_target CHECK (num_nonnulls(product_id, organisation_id) = 1)
+);
+
+CREATE UNIQUE INDEX favourites_product_uidx ON favourites (user_id, product_id)      WHERE product_id IS NOT NULL;
+CREATE UNIQUE INDEX favourites_org_uidx     ON favourites (user_id, organisation_id) WHERE organisation_id IS NOT NULL;
+
+-- ---------------------------------------------------------------------------
+-- MODULE: platform - event log, configuration, fraud
+-- ---------------------------------------------------------------------------
+
+-- "Comprehensive event logging from day one to support future analytics, AI
+-- and graph-based intelligence" (PRD CTO note). Append-only; this table is the
+-- seam where an Apache Kafka topic is introduced when scale demands it.
+CREATE TABLE event_log (
+  id             BIGSERIAL PRIMARY KEY,
+  event_type     TEXT NOT NULL,
+  aggregate_type TEXT NOT NULL,
+  aggregate_id   TEXT NOT NULL,
+  actor_user_id  UUID REFERENCES users(id) ON DELETE SET NULL,
+  payload        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  occurred_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX event_log_type_idx      ON event_log (event_type, occurred_at DESC);
+CREATE INDEX event_log_aggregate_idx ON event_log (aggregate_type, aggregate_id);
+
+-- Recommendation weights live in data, not code: "Weights should be
+-- configurable without changing application code" (SAD).
+CREATE TABLE ranking_weights (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  scope      ranking_scope NOT NULL,
+  factor     TEXT NOT NULL,
+  weight     NUMERIC(5,2) NOT NULL CHECK (weight >= 0),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (scope, factor)
+);
+
+CREATE TABLE platform_settings (
+  key        TEXT PRIMARY KEY,
+  value      JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE fraud_alerts (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id         UUID REFERENCES users(id) ON DELETE SET NULL,
+  organisation_id UUID REFERENCES organisations(id) ON DELETE SET NULL,
+  order_id        UUID REFERENCES orders(id) ON DELETE SET NULL,
+  kind            TEXT NOT NULL,
+  severity        TEXT NOT NULL DEFAULT 'low',
+  detail          TEXT,
+  resolved        BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX fraud_alerts_open_idx ON fraud_alerts (resolved, created_at DESC);

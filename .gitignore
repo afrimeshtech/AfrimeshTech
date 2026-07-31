@@ -1,0 +1,13 @@
+node_modules/
+.next/
+out/
+build/
+.pgdata/
+.env
+.env.local
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
+
+# Locally stored uploads and generated seed imagery
+public/uploads/

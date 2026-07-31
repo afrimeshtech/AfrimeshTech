@@ -1,0 +1,1049 @@
+@import 'tailwindcss';
+
+/* ===========================================================================
+   AfriMesh design tokens — light theme on a soft warm grey.
+   ---------------------------------------------------------------------------
+   Specified palette:
+     Primary background   soft warm grey      #f0f2f0
+     Text primary         deep forest green   #2d4a3a
+     Accent               vivid orange        #ff9500
+     Input fields         off-white / cream   #f5f5f5
+     Notification badges  coral red           #e74c3c
+     Blue banner          deep blue           (see --color-info)
+
+   Two values move with the ground rather than being taken literally, because a
+   colour that reads on dark green does not read on a light page:
+
+     secondary text  #a8b8b0 was 4.7:1 on green, but 1.9:1 here — replaced
+     accent-ink      white on the accent was correct while the accent was dark;
+                     with the vivid orange it is 2.2:1, so it is dark now
+
+   The accent itself IS taken literally — see the note above --color-accent-500
+   for what that costs and how it is contained.
+
+   Deliberately dark surfaces are kept — the hero panels and category cards stay
+   green, which is the "high contrast between dark and light elements" the
+   visual direction asks for. Anything inside them takes white.
+   =========================================================================== */
+
+@theme {
+  /* -- Surfaces ------------------------------------------------------------
+     The page ground is a soft warm grey rather than bright white: less glare
+     over a long session, and it lets a card lift off the page instead of
+     needing a border to prove it is a card. `--color-surface` stays white,
+     because it is now what sits *on* the ground — the moment both are grey,
+     every card disappears.
+     --------------------------------------------------------------------- */
+  --color-page: #f0f2f0; /* PRIMARY BACKGROUND — body text clears AA on it */
+  --color-surface: #ffffff; /* cards and panels, lifted off the ground */
+  --color-surface-muted: #f4f7f5; /* hover, subtle fills */
+  --color-surface-strong: #e5ebe7; /* stronger fills, empty states */
+  --color-surface-deep: #021614; /* deliberate dark chrome — the logo ground */
+
+  /* -- Accent: vivid orange -----------------------------------------------
+     #ff9500 throughout, as a deliberate product decision: the brighter orange
+     is the one that reads as digital, and it is the accent the design calls
+     for. It is used for text as well as fill.
+
+     What that costs, recorded so nobody has to re-derive it: #ff9500 measures
+     2.0:1 on the page ground. Small orange text therefore sits below the 4.5:1
+     WCAG AA threshold, and the orange alone is not a reliable signal for
+     anyone with low vision or in strong sunlight — which, for a market in
+     Lagos, is the ordinary case rather than the edge one.
+
+     Two things are done to keep that contained rather than compounding:
+
+       1. Nothing is signalled by the orange *alone*. Every accented string is
+          also positioned, weighted or labelled — "4 shops nearby" reads as
+          itself in grey; the accent is emphasis on top of a message that
+          already works without it.
+       2. Anything sitting ON the accent takes a dark ink, not white. White on
+          #ff9500 is 2.2:1 and would make every button label in the app
+          illegible; --color-accent-ink below is 6.1:1 on it.
+     --------------------------------------------------------------------- */
+  /* Was a lighter orange, for accents on the dark panels. The vivid accent
+     already measures 8.5:1 on the dark bar, so a separate lighter value is no
+     longer earning anything — and where accent-400 is used on a LIGHT ground
+     (hovered link text, rating stars) a lighter orange was strictly worse.
+     Kept as an alias so the ~15 call sites do not all have to change. */
+  --color-accent-400: #ff9500;
+  --color-accent-500: #ff9500;
+  --color-accent-600: #e08400; /* hover — one step down, same family */
+  --color-accent-glow: color-mix(in srgb, #ff9500 38%, transparent);
+  /* Foreground for anything sitting ON the accent. Dark, because the accent is
+     now a light colour: 6.1:1 on #ff9500, where white would be 2.2:1. */
+  --color-accent-ink: #1f3329;
+  --color-accent-soft: color-mix(in srgb, #ff9500 16%, transparent);
+
+  /* The keyboard focus ring is not styling — it is the only thing telling a
+     keyboard user where they are, and a 2:1 ring is one a lot of people simply
+     cannot find. It keeps the darker burnt orange, which clears the 3:1 that
+     non-text indicators require. */
+  --color-focus-ring: #c04a12;
+
+  /* -- Type --------------------------------------------------------------- */
+  --color-ink: #2d4a3a; /* PRIMARY TEXT, deep forest green — 8.1:1 on white */
+  --color-muted: #5a6f66; /* secondary text — 5.3:1 on white */
+
+  /* -- Inputs ------------------------------------------------------------- */
+  --color-field: #f5f5f5;
+  --color-field-ink: #1f3329;
+  --color-field-muted: #61726a; /* placeholder on cream — 4.7:1 */
+
+  /* -- Status: inks re-tuned for a white ground --------------------------- */
+  --color-coral: #e74c3c; /* notification badges, as specified */
+  --color-coral-ink: #b3271a; /* coral as *text* on white — 5.0:1 */
+  --color-coral-strong: #c0392b;
+  --color-warning: #f0a832;
+  --color-warning-ink: #8a5a00;
+  /* Blue banner. Placeholder until the intended hex is supplied. */
+  --color-info: #1b3a5c;
+  --color-info-ink: #1b3a5c;
+  --color-success: #1a6b45;
+  --color-success-ink: #14603f; /* 7.6:1 on white */
+
+  /* -- Lines: dark alpha now, not white alpha ----------------------------- */
+  --color-line: color-mix(in srgb, #2d4a3a 18%, transparent);
+  --color-line-soft: color-mix(in srgb, #2d4a3a 10%, transparent);
+
+  /* -- Typography ---------------------------------------------------------
+     Specified scale:
+       Headings    bold sans-serif, 72–80px, white with orange accent words
+       Body        regular sans-serif, 16px, light gray
+       UI labels   medium sans-serif, 14px
+
+     72–80px is a display size for marketing surfaces — a hero, a landing
+     section. It is not a size an order row or a dashboard tile can use, so the
+     scale below keeps the specified display sizes and steps down from them,
+     rather than applying 72px to every heading and breaking the layout on a
+     phone. `text-display` fluidly spans 40px → 80px so the hero honours the
+     figure on a desktop without overflowing a 360px screen.
+     ------------------------------------------------------------------------ */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, Arial, sans-serif;
+  --font-technical: var(--font-plex), ui-sans-serif, system-ui, Arial, sans-serif;
+
+  /* Display: the 72–80px specified heading size. */
+  --text-display: clamp(2.5rem, 7vw, 5rem); /* 40 → 80px */
+  --text-display--line-height: 1.04;
+  --text-display--letter-spacing: -0.03em;
+  --text-display--font-weight: 700;
+
+  --text-display-sm: clamp(2rem, 5vw, 3.25rem); /* 32 → 52px */
+  --text-display-sm--line-height: 1.1;
+  --text-display-sm--letter-spacing: -0.02em;
+  --text-display-sm--font-weight: 700;
+
+  /* Body: 16px regular. */
+  --text-body: 1rem;
+  --text-body--line-height: 1.6;
+  --text-body--font-weight: 400;
+
+  /* UI labels: 14px medium. */
+  --text-label: 0.875rem;
+  --text-label--line-height: 1.45;
+  --text-label--font-weight: 500;
+
+  /* The brand's green tile. One token for both the category cards and the
+     product thumbnails, so the two genuinely match rather than being two values
+     five points apart that only look the same.
+
+     Lifted from #2d5a4a to #2d7a6b: brighter reads as lit rather than printed,
+     which is the digital feel we are after. White on it is 5.1:1, so the labels
+     inside a category card still clear AA. The original deeper green is kept
+     below — it is the far end of the tile gradient and the colour of the glow
+     the tiles cast, both of which need something darker than the face. */
+  --color-category-card: #2d7a6b;
+  --color-product-tile: #2d7a6b;
+  --color-brand-deep: #2d5a4a; /* gradient far end, and the glow colour */
+  --color-brand-deepest: #1a3a32; /* badge gradients */
+  --color-brand-glow: color-mix(in srgb, #2d5a4a 20%, transparent);
+  /* The same green, opaque enough to actually be seen as a cast shadow. The
+     20% above is the specified value and stays available; at the sizes these
+     tiles are drawn, it alone was invisible against the page. */
+  --color-brand-glow-strong: color-mix(in srgb, #2d5a4a 42%, transparent);
+
+  /* -- Header and footer: the logo's own surface --------------------------
+     Sampled from Afrimesh logo.jpeg. The bars carry the artwork's exact
+     background, so the lockup sits in them with no visible edge.
+
+     Text on the bars is white — the logo's own primary text colour (AFRI, and
+     the tagline), and 18.6:1 on this ground.
+
+     The logo's green (#216441) and tan (#8a5b31) measure 2.6:1 and 3.2:1 here.
+     They are correct *inside the artwork*, where they are large letterforms and
+     graphics, but neither is legible as small UI text. The lighter pair below
+     is used where a bar element needs those hues and has to be readable.
+     --------------------------------------------------------------------- */
+  --color-bar: #021614; /* logo ground */
+  --color-bar-ink: #ffffff; /* logo white — 18.6:1 */
+  --color-bar-muted: color-mix(in srgb, #ffffff 72%, transparent);
+  --color-bar-line: color-mix(in srgb, #ffffff 16%, transparent);
+  --color-bar-green: #3f9c68; /* logo green, lifted to 5.5:1 for UI text */
+  --color-bar-tan: #c08a52; /* logo tan, lifted to 6.2:1 for UI text */
+
+  /* -- Logo -------------------------------------------------------------------
+     The mark keeps its own colours, independent of the orange UI accent — a
+     logo that recolours with the interface theme stops being an identity.
+
+     Specified:
+       #FFFFFF  the main "A" shape
+       #2d5a4a  map and layering
+       #b8860b / #a0784a  mesh nodes and connectivity lines
+
+     Both tan values are used deliberately: #a0784a for the lines and outer
+     nodes, #b8860b for the middle node, so the chain reads as having depth
+     rather than as three identical dots.
+
+     NOTE on #2d5a4a: measured against the dark containers it is 2.15:1, under
+     the 3:1 minimum for non-text graphics, and it is 5 points off the app's own
+     background (#2d4a3a) so the bare mark's green nearly disappears on a page.
+     Implemented as specified; see the note in the handover for the remedy.
+     ------------------------------------------------------------------------ */
+  --logo-white: #ffffff;
+  --logo-green: #2d5a4a;
+  /* One step deeper, so "layered" actually reads as two layers. Derived,
+     because a single green cannot show layering against itself. */
+  --logo-green-deep: #21463a;
+  --logo-tan: #a0784a;
+  --logo-tan-light: #b8860b;
+
+  /* -- Drawer menu --------------------------------------------------------
+     Specified: icons #4a6a5a, labels #7a8a7a, on a light menu surface.
+
+     #4a6a5a measures 6.0:1 on white — comfortably above the 3:1 a graphic
+     needs, so the icons are used exactly as given.
+
+     #7a8a7a measures 3.66:1, below the 4.5:1 that text requires. It is set
+     here as specified; --color-menu-label-aa is the nearest value in the same
+     hue that passes, for when legibility matters more than the exact swatch.
+     --------------------------------------------------------------------- */
+  --color-menu-icon: #4a6a5a;
+  --color-menu-label: #7a8a7a;
+  --color-menu-label-aa: #657565; /* same hue, 4.9:1 */
+
+  /* -- Icons -------------------------------------------------------------- */
+  /* Dark gray, for icons sitting on the cream fields and other light
+     elements. Icons on the dark ground inherit the body colour instead. */
+  --color-icon: #5d6d64;
+
+  /* -- Shape: rounded corners throughout, 16–24px ------------------------- */
+  --radius-brand: 1rem; /* 16px — controls, chips, buttons */
+  --radius-card: 1.5rem; /* 24px — cards and panels */
+  --radius-field: 1rem; /* 16px — input fields */
+
+  /* -- Soft shadows -------------------------------------------------------
+     Three depths, and everything picks one of them rather than inventing a
+     fourth. Every layer is tinted with the ink green, never pure black: black
+     on a warm grey ground goes muddy, a green tint stays in the palette.
+
+       subtle  1–2px   things resting on the ground (fields, tags, tiles)
+       medium  4–6px   cards at rest
+       strong  8–12px  the thing under the pointer, and overlays
+     --------------------------------------------------------------------- */
+  --shadow-subtle:
+    0 1px 2px color-mix(in srgb, #2d4a3a 8%, transparent),
+    0 2px 4px -2px color-mix(in srgb, #2d4a3a 8%, transparent);
+  --shadow-medium:
+    0 2px 4px color-mix(in srgb, #2d4a3a 8%, transparent),
+    0 6px 16px -6px color-mix(in srgb, #2d4a3a 16%, transparent);
+  --shadow-strong:
+    0 4px 8px color-mix(in srgb, #2d4a3a 10%, transparent),
+    0 12px 32px -8px color-mix(in srgb, #2d4a3a 24%, transparent);
+
+  /* Named for what they are attached to; both resolve to the scale above. */
+  --shadow-card: var(--shadow-medium);
+  --shadow-raised: var(--shadow-strong);
+
+  /* Input fields: subtler than a card, because a field should sit just off the
+     surface rather than float above it. The inset top line is a 1px highlight
+     that gives the cream a slight physical edge against the dark ground. */
+  --shadow-field: inset 0 1px 0 #fff, 0 1px 2px color-mix(in srgb, #2d4a3a 10%, transparent);
+  /* On focus the lift increases slightly, so the active field is obvious
+     without relying on the focus ring alone. */
+  --shadow-field-focus: inset 0 1px 0 #fff, 0 2px 6px color-mix(in srgb, #2d4a3a 16%, transparent);
+
+  /* -- Motion -------------------------------------------------------------
+     Three curves and three durations, so motion across the app feels like one
+     system rather than per-component guesswork. Everything here is decorative:
+     the reduced-motion block near the bottom of this file switches all of it
+     off, and nothing depends on an animation having run.
+     --------------------------------------------------------------------- */
+  --ease-soft: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Overshoots past 1 then settles — the bounce on a category icon. */
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --duration-tap: 60ms;
+  --duration-hover: 260ms;
+  --duration-enter: 460ms;
+
+  /* -- Metric cards -------------------------------------------------------
+     The one place in the app where a card is dark. A dashboard is read by
+     scanning for the number, and a grid of dark tiles on the light page turns
+     that scan into one movement instead of eight. Text on them is specified
+     below rather than reusing --color-ink, which is a colour for light grounds
+     and would be invisible here.
+     --------------------------------------------------------------------- */
+  --color-stat-label: #d0d8d0; /* 5.4:1 on the card's lighter end */
+  --color-stat-value: #ffffff; /* 7.9:1 — the number carries the card */
+  --color-stat-hint: #a0b0a0; /* sits low, where the gradient is darkest */
+  /* The danger hint needs to survive a dark ground: the usual #b3271a is a
+     dark red on dark green and disappears. This is the same signal, lifted. */
+  --color-stat-danger: #ffb3a7;
+
+  /* -- Price -------------------------------------------------------------- */
+  /* A warm sand behind a price, so the number a shopper is comparing has its
+     own ground without needing to be another colour of text. */
+  --color-price-tint: #f5f0e8;
+}
+
+/* ---------------------------------------------------------------------------
+   Keyframes
+   --------------------------------------------------------------------------- */
+
+/* Cards arriving: up, in, and out from slightly small. The scale is what makes
+   it read as arriving rather than merely fading — 0.96 is enough to see and
+   small enough that text never looks like it resampled on the way in. */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Category icons arriving: scale past 1 and settle, via --ease-bounce. */
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* A highlight travelling diagonally across a card. Used on hover, so it fires
+   on the pointer rather than running forever in the corner of the eye. */
+@keyframes sheen {
+  from {
+    transform: translateX(-120%) skewX(-18deg);
+  }
+  to {
+    transform: translateX(320%) skewX(-18deg);
+  }
+}
+
+/* Notification counts: a ring that expands and fades, leaving the badge
+   itself still — a badge that changes size shifts the icon next to it. */
+@keyframes ring-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-coral) 55%, transparent);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+}
+
+/* The accent breathing on "shops nearby": opacity only, so text stays put. */
+@keyframes accent-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.62;
+  }
+}
+
+/* Skeletons: a highlight travelling left to right across the block. */
+@keyframes shimmer {
+  from {
+    background-position: -150% 0;
+  }
+  to {
+    background-position: 250% 0;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Base
+   --------------------------------------------------------------------------- */
+
+* {
+  border-color: var(--color-line-soft);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  background: var(--color-page);
+  /* The category row scrolls itself; anchor jumps elsewhere should glide. */
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--color-page);
+  /* Body text is light gray at 16px; headings opt into white explicitly. That
+     way the default state of running prose is the specified secondary colour,
+     and white is reserved for things meant to lead. */
+  color: var(--color-muted);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: 1.6;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Headings are bold and white by default, so a new one is correct without
+   remembering to set either. */
+h1,
+h2,
+h3,
+h4 {
+  color: var(--color-ink);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+/* Labels: 14px medium. Applies to form labels and table headers, which is
+   every UI label in the app. */
+label,
+th {
+  font-size: var(--text-label);
+  font-weight: 500;
+}
+
+/* The deliberately dark surfaces are islands in a light app, so everything
+   inside them flips to light. Without this the heading rule above would put
+   deep green text on a deep green panel — invisible, and the kind of thing that
+   only shows up once you look at the page. */
+.mesh-surface :where(h1, h2, h3, h4) {
+  color: #fff;
+}
+.mesh-surface :where(p, li, dd, dt, span) {
+  color: color-mix(in srgb, #fff 78%, transparent);
+}
+.mesh-surface .hero-lede {
+  color: color-mix(in srgb, #fff 78%, transparent);
+}
+/* An accent word on a dark panel needs the lighter accent to clear contrast. */
+.mesh-surface .accent-word {
+  color: var(--color-accent-400);
+}
+
+/* Form fields are cream on a dark page, per the palette. Styled at the element
+   level rather than per-component so a plain <input> anywhere in the app is
+   legible by default — inheriting the page's white-on-green would render typed
+   text invisible, which is the kind of bug that only shows up in use. */
+input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='range']),
+textarea,
+select {
+  background-color: var(--color-field);
+  color: var(--color-field-ink);
+  border-color: color-mix(in srgb, #1f3329 18%, transparent);
+  border-radius: var(--radius-field);
+  box-shadow: var(--shadow-field);
+  transition:
+    border-color 0.2s var(--ease-soft),
+    box-shadow 0.2s var(--ease-soft);
+}
+
+input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='range']):focus,
+textarea:focus,
+select:focus {
+  box-shadow: var(--shadow-field-focus);
+}
+
+/* A select's dropdown arrow is drawn by the platform and would sit on the
+   cream at the wrong weight; nudge it toward the icon grey. */
+select {
+  color-scheme: light;
+}
+
+/* Buttons and links animate on their own, so a hover never snaps. */
+button,
+a,
+[role='button'],
+summary {
+  transition:
+    background-color 0.2s var(--ease-soft),
+    border-color 0.2s var(--ease-soft),
+    color 0.2s var(--ease-soft),
+    opacity 0.2s var(--ease-soft),
+    transform 0.2s var(--ease-soft);
+}
+
+/* Icons inside a cream field are dark gray; the field is the light element. */
+input + svg,
+.field-icon svg {
+  color: var(--color-icon);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-field-muted);
+}
+
+/* Checkboxes and radios keep the accent, not the field colour. */
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--color-accent-500);
+}
+
+/* Date and number spinners render dark-on-dark otherwise. */
+input[type='date']::-webkit-calendar-picker-indicator {
+  filter: invert(0.2);
+}
+
+::selection {
+  background: var(--color-accent-500);
+  color: var(--color-accent-ink);
+}
+
+/* Accessibility: visible keyboard focus on every interactive surface. */
+:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Touch-friendly targets. */
+button,
+a[role='button'],
+[type='submit'] {
+  min-height: 2.25rem;
+}
+
+/* Every animation in this file is decoration. Someone who has asked their OS
+   for less motion gets the finished state immediately — including the stagger
+   delays, which would otherwise leave a card blank for half a second, and the
+   looping pulses, which are the worst offenders for anyone motion-sensitive. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Lifts and presses go too: they are transform, not colour, and a jump to
+     the transformed state is worse than no movement at all. */
+  .card-interactive:hover,
+  .press:active {
+    transform: none !important;
+  }
+
+  /* The travelling highlight is pure motion with nothing behind it. */
+  .sheen::after,
+  .sheen:hover::after {
+    display: none !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Utilities
+   --------------------------------------------------------------------------- */
+
+/* Cards: 24px corners, soft shadow, generous internal space. */
+@utility card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+
+/* A card that responds to the pointer — lifts rather than just tinting. */
+@utility card-interactive {
+  transition:
+    box-shadow var(--duration-hover) var(--ease-out),
+    transform var(--duration-hover) var(--ease-out),
+    border-color var(--duration-hover) var(--ease-out),
+    background-color var(--duration-hover) var(--ease-out);
+}
+@utility card-interactive-hover {
+  box-shadow: var(--shadow-strong);
+  transform: translateY(-4px);
+  border-color: var(--color-line);
+}
+
+/* Press feedback.
+
+   Longhands, not the `transition` shorthand. `press` and `card-interactive`
+   are both single-class selectors and both land on every product card, so
+   whichever the stylesheet emits last wins outright — with the shorthand here
+   that was `press`, which meant the card's hover lift ran at the 50ms tap
+   speed and its shadow and border did not transition at all. The lift looked
+   like a snap. Longhands compose instead of clobbering.
+
+   The tap stays fast, but the speed now lives on the pressed state rather than
+   the resting one: a press should feel instant, a hover should glide. */
+@utility press {
+  transition-property: transform, box-shadow, border-color, background-color;
+  transition-duration: var(--duration-hover);
+  transition-timing-function: var(--ease-out);
+}
+@utility press-active {
+  transform: scale(0.97);
+  transition-duration: var(--duration-tap);
+}
+
+/* -- Entrances -----------------------------------------------------------
+   Applied to content that is already in the markup — these animate what the
+   server rendered, so nothing waits on JavaScript to become visible. Stagger
+   is an inline `animation-delay` at the call site, capped there so a long list
+   does not take four seconds to finish arriving.
+   ---------------------------------------------------------------------- */
+@utility rise-in {
+  animation: rise-in var(--duration-enter) var(--ease-out) both;
+}
+@utility pop-in {
+  animation: pop-in 320ms var(--ease-bounce) both;
+}
+
+/* -- Glow and depth ------------------------------------------------------ */
+
+/* The green cast a tile throws onto the page beneath it. */
+@utility brand-glow {
+  box-shadow:
+    var(--shadow-subtle),
+    0 6px 18px -6px var(--color-brand-glow);
+}
+
+/* Warm halo on the accent, for a hovered price or an emphasised control. */
+@utility accent-glow {
+  box-shadow: 0 0 0 3px var(--color-accent-glow);
+}
+
+/* The bar between the chrome and the content. Header casts downward, footer
+   upward, so the scrolling content reads as a layer between the two. */
+@utility bar-depth {
+  box-shadow: 0 4px 16px -6px color-mix(in srgb, #021614 45%, transparent);
+}
+@utility bar-depth-top {
+  box-shadow: 0 -4px 16px -6px color-mix(in srgb, #021614 45%, transparent);
+}
+
+/* Drawer menu row: icon, label, optional badge. 16px in from the panel edge,
+   with a subtle fill on hover rather than a hard highlight. */
+@utility menu-row {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-brand);
+  color: var(--color-menu-label);
+  font-size: 0.9375rem; /* 15px */
+  transition:
+    background-color 0.18s var(--ease-soft),
+    color 0.18s var(--ease-soft);
+}
+@utility menu-row-hover {
+  background: color-mix(in srgb, #4a6a5a 8%, transparent);
+  color: var(--color-ink);
+}
+
+/* The 16px badge the drawer specifies — smaller than the header pill. */
+@utility pill-notify-sm {
+  display: grid;
+  place-items: center;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: var(--color-coral);
+  color: #fff;
+  font-size: 0.625rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* Notification pill: coral, fully rounded, tabular digits so 1 and 8 are the
+   same width and the pill does not jitter as a count changes.
+
+   The pulse is a ring cast outward from the pill, not the pill itself scaling:
+   a badge that grows and shrinks drags the eye permanently, and it would nudge
+   the icon it is pinned to. Three beats, then it stops — a thing that pulses
+   forever stops meaning "new" and starts meaning "background". */
+@utility pill-notify {
+  display: grid;
+  place-items: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.375rem;
+  border-radius: 999px;
+  background: var(--color-coral);
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  /* Runs continuously. It was capped at three beats so it would not sit in the
+     corner of the eye forever; an unread count that keeps signalling is the
+     behaviour actually wanted here, and the ring expands outward from a badge
+     that itself stays perfectly still. */
+  animation: ring-pulse 2s var(--ease-out) infinite;
+}
+
+/* An accent word in running text: the orange, plus a faint warm bloom behind
+   it. Text-shadow rather than a filter, so it costs no layer and the glyph
+   edges stay sharp. */
+@utility accent-glow-text {
+  color: var(--color-accent-500);
+  text-shadow: 0 0 12px color-mix(in srgb, #ff9500 22%, transparent);
+}
+
+/* The accent on "shops nearby": breathes a few times to pull the eye to the
+   one line on the card that says the thing is actually buyable near you, then
+   settles and stays put. */
+@utility accent-attention {
+  animation: accent-breathe 2.4s var(--ease-soft) infinite;
+}
+
+/* Outlined icon button. Transparent until touched, then it fills gently and
+   the icon brightens — the whole affordance is the outline and the hover. */
+@utility icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--radius-brand);
+  border: 1px solid var(--color-line-soft);
+  color: var(--color-muted);
+  background: transparent;
+  transition:
+    background-color 0.2s var(--ease-soft),
+    border-color 0.2s var(--ease-soft),
+    color 0.2s var(--ease-soft);
+}
+@utility icon-button-hover {
+  background: var(--color-surface-muted);
+  border-color: var(--color-line);
+  color: var(--color-ink);
+}
+
+/* A wrapper that *is* the field — used where the visible surface is a container
+   holding a transparent input plus an icon. It carries the field's colour and
+   shadow so the inner input can stay bare and not double up. */
+@utility field-shell {
+  background: var(--color-field);
+  border-radius: var(--radius-field);
+  box-shadow: var(--shadow-field);
+  transition: box-shadow 0.2s var(--ease-soft);
+}
+@utility field-shell-focus {
+  box-shadow: var(--shadow-field-focus);
+}
+
+/* Input field with a leading icon. The icon is dark gray because the field is
+   cream; the padding leaves room so text never runs under it. */
+@utility field-with-icon {
+  position: relative;
+}
+@utility field-icon {
+  position: absolute;
+  left: 0.875rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-icon);
+  pointer-events: none;
+}
+
+@utility mesh-surface {
+  /* The mesh motif — interconnected businesses — on the deepest surface. */
+  color: #fff;
+  background-color: var(--color-surface-deep);
+  background-image:
+    radial-gradient(
+      circle at 18% 22%,
+      color-mix(in srgb, #436953 55%, transparent) 0,
+      transparent 42%
+    ),
+    radial-gradient(
+      circle at 82% 12%,
+      color-mix(in srgb, #e8763a 22%, transparent) 0,
+      transparent 40%
+    ),
+    radial-gradient(
+      circle at 60% 88%,
+      color-mix(in srgb, #2d4a3a 70%, transparent) 0,
+      transparent 45%
+    );
+}
+
+/* The deep blue banner. */
+@utility blue-banner {
+  background: var(--color-info);
+  color: var(--color-ink);
+}
+
+/* An orange word inside a white heading — the specified heading treatment.
+   Wrap the word that carries the meaning, not a decorative one. */
+@utility accent-word {
+  color: var(--color-accent-500);
+  text-shadow: 0 0 14px color-mix(in srgb, #ff9500 20%, transparent);
+}
+
+/* ---------------------------------------------------------------------------
+   Hero sections
+   ---------------------------------------------------------------------------
+   Generous vertical spacing, scaled to the viewport: 56px of breathing room on
+   a phone rising to 112px on a desktop. Fluid rather than fixed because a
+   generous desktop hero is oppressive on a 360px screen — the same 112px would
+   push the first real content below the fold.
+   --------------------------------------------------------------------------- */
+
+@utility hero {
+  padding-block: clamp(3.5rem, 8vw, 7rem);
+  padding-inline: clamp(1.25rem, 4vw, 3rem);
+  border-radius: var(--radius-card);
+}
+
+/* The description under a hero heading: light gray, a touch larger than body
+   copy, and held to a comfortable measure so a long line does not run the full
+   width of a desktop. */
+@utility hero-lede {
+  margin-top: 1.75rem;
+  max-width: 46ch;
+  color: var(--color-muted);
+  font-size: clamp(1rem, 1.4vw, 1.125rem);
+  line-height: 1.7;
+  font-weight: 400;
+  text-wrap: pretty;
+}
+
+/* Actions sit well clear of the description rather than crowding it. */
+@utility hero-actions {
+  margin-top: 2.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+/* Horizontal scroll containers must scroll themselves, never the page. */
+@utility scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  /* A keyboard tab or a snap landing glides rather than jumping. Momentum
+     scrolling by finger is unaffected — this only applies to programmatic and
+     snap-driven movement. */
+  scroll-behavior: smooth;
+}
+
+/* A category card in the scrollable row: dark green, rounded, bordered, with
+   the illustration above the name. Fixed width so the row keeps an even rhythm
+   whether a name is "Pharmacy" or "Building Materials". */
+@utility category-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 0 0 auto;
+  width: 6.75rem; /* 108px */
+  padding: 0.875rem 0.5rem 1rem;
+  background: linear-gradient(160deg, var(--color-category-card), var(--color-brand-deep));
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 14%, transparent),
+    var(--shadow-medium),
+    0 8px 20px -8px var(--color-brand-glow);
+  transition:
+    border-color var(--duration-hover) var(--ease-out),
+    transform var(--duration-hover) var(--ease-out),
+    box-shadow var(--duration-hover) var(--ease-out);
+}
+@utility category-card-hover {
+  border-color: var(--color-accent-500);
+  transform: translateY(-4px);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 20%, transparent),
+    var(--shadow-strong),
+    0 0 0 3px var(--color-accent-glow);
+}
+
+/* The illustration inside a category card: scales up and tilts a few degrees
+   under the pointer. Three degrees, because a category icon that spins is a
+   toy — this should read as the tile responding, not performing. */
+@utility category-art {
+  transition: transform var(--duration-hover) var(--ease-bounce);
+}
+@utility category-art-hover {
+  transform: scale(1.1) rotate(-3deg);
+}
+
+/* The dark tile a product illustration or a seller mark sits on. One utility
+   for both, so the two never drift apart — they appear side by side on an offer
+   card. The inset highlight along the top edge plus the drop shadow give the
+   tile depth, so the mark reads as sitting *in* something rather than pasted on
+   a flat square. */
+@utility brand-tile {
+  /* Lit from above: the brighter green at the top, the deeper one at the
+     bottom, which is the same read as the inset highlight but across the whole
+     face rather than one pixel of it. */
+  background: linear-gradient(160deg, var(--color-product-tile), var(--color-brand-deep));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 26%, transparent),
+    inset 0 -2px 0 color-mix(in srgb, #000000 20%, transparent),
+    var(--shadow-subtle),
+    0 8px 18px -6px var(--color-brand-glow-strong);
+  transition:
+    transform var(--duration-hover) var(--ease-bounce),
+    box-shadow var(--duration-hover) var(--ease-out);
+}
+
+/* The tile grows and tilts when its card is hovered — enough to register as
+   alive, not enough to reflow anything around it. */
+@utility brand-tile-hover {
+  transform: scale(1.12) rotate(-2deg);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 34%, transparent),
+    var(--shadow-medium),
+    0 0 0 3px var(--color-accent-glow),
+    0 14px 28px -8px var(--color-brand-glow-strong);
+}
+
+/* A product card in a results grid.
+
+   Glass rather than a flat fill: a near-white gradient, top brighter than
+   bottom, over a blur of the warm grey page. That gives the card a lit top
+   edge and a settled bottom one, which is what sells depth at this size — and
+   it keeps the card reading as the soft off-white asked for while still
+   separating from the ground the way plain grey-on-grey could not.
+
+   `backdrop-filter` is progressive: without it the gradient alone still lands
+   at ~88% white over the page, so the card looks the same, just flatter. */
+@utility product-card {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(
+    to bottom,
+    #ffffff,
+    color-mix(in srgb, #ffffff 72%, var(--color-page))
+  );
+  backdrop-filter: blur(14px) saturate(1.15);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  border: 1px solid color-mix(in srgb, #ffffff 70%, var(--color-line));
+  border-radius: var(--radius-card);
+  /* The inset white line along the top is the glass edge catching the light —
+     it is what separates this from a plain rounded rectangle at a glance. */
+  box-shadow:
+    inset 0 1px 0 #ffffff,
+    var(--shadow-medium);
+}
+
+/* Hover adds an accent ring on top of the lift, so the card the pointer is on
+   is unmistakable in a grid of twelve. */
+@utility product-card-hover {
+  border-color: color-mix(in srgb, var(--color-accent-500) 55%, transparent);
+  box-shadow:
+    inset 0 1px 0 #ffffff,
+    0 0 0 3px var(--color-accent-glow),
+    var(--shadow-strong);
+}
+
+/* The travelling highlight. A plain class rather than a Tailwind utility
+   because it needs a pseudo-element, and it lives in the stylesheet either
+   way — nothing here depends on the class scanner finding it. */
+.sheen::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 45%;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, #ffffff 75%, transparent),
+    transparent
+  );
+  opacity: 0;
+  transform: translateX(-120%) skewX(-18deg);
+}
+.sheen:hover::after {
+  opacity: 1;
+  animation: sheen 700ms var(--ease-out);
+}
+/* On the dark tiles the sweep has to be warm rather than white, or it reads as
+   a scratch across the green instead of a reflection. */
+.sheen-warm::after {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--color-accent-500) 40%, transparent),
+    transparent
+  );
+}
+
+/* A metric card: forest green, gradient to a deeper green at the bottom, with
+   a 2px accent line along the top.
+
+   The accent line is an inset box-shadow rather than a border, so it follows
+   the corner radius and costs no layout — a real border-top would push every
+   card down 2px and break the grid rhythm against anything beside it.
+
+   16px corners rather than the 24px a content card uses: these are small, and
+   at 96px tall a 24px radius starts eating the number. */
+@utility stat-card {
+  background: linear-gradient(165deg, var(--color-brand-deep), var(--color-brand-deepest));
+  border-radius: var(--radius-brand);
+  box-shadow:
+    inset 0 2px 0 var(--color-accent-500),
+    var(--shadow-medium),
+    0 8px 20px -10px var(--color-brand-glow);
+  transition:
+    transform var(--duration-hover) var(--ease-out),
+    box-shadow var(--duration-hover) var(--ease-out);
+}
+@utility stat-card-hover {
+  transform: translateY(-2px);
+  box-shadow:
+    inset 0 2px 0 var(--color-accent-500),
+    var(--shadow-strong),
+    0 14px 28px -10px var(--color-brand-glow);
+}
+
+/* The price on a card: its own warm ground, so the number being compared is
+   findable without shouting in another colour. */
+@utility price-tag {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  margin-left: -0.5rem;
+  border-radius: 0.625rem;
+  background: var(--color-price-tint);
+  /* A permanent accent edge, so the price reads as tagged at rest rather than
+     only once the pointer arrives — most of the time nothing is hovered. */
+  box-shadow: inset 3px 0 0 var(--color-accent-500);
+  transition:
+    box-shadow var(--duration-hover) var(--ease-out),
+    background-color var(--duration-hover) var(--ease-out);
+}
+@utility price-tag-glow {
+  background: color-mix(in srgb, var(--color-accent-500) 18%, var(--color-price-tint));
+  box-shadow:
+    inset 3px 0 0 var(--color-accent-500),
+    0 0 0 4px var(--color-accent-glow);
+}
+
+/* Skeletons: a highlight sweeping across the block, rather than the whole
+   block blinking. Reads as "loading" instead of "broken". */
+@utility shimmer {
+  background-image: linear-gradient(
+    100deg,
+    var(--color-surface-muted) 20%,
+    color-mix(in srgb, #ffffff 85%, var(--color-surface-muted)) 42%,
+    var(--color-surface-muted) 64%
+  );
+  background-size: 220% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
