@@ -1,4 +1,5 @@
 import { formatMoney } from '@/lib/money'
+import { formatPoints } from '@/lib/points'
 import { EmptyState } from '@/components/ui'
 import type { StatementLine } from '@/modules/wallet/service'
 
@@ -13,16 +14,35 @@ const TYPE_LABEL: Record<string, string> = {
   escrow_hold: 'Held in escrow',
   escrow_release: 'Released from escrow',
   cashback: 'Cashback',
+  referral_reward: 'Referral reward',
+  points_redemption: 'Points converted',
 }
 
-/** Wallet statement, straight from the double-entry ledger. */
-export function Statement({ lines }: { lines: StatementLine[] }) {
+/**
+ * Wallet statement, straight from the double-entry ledger.
+ *
+ * The points ledger is the same ledger in a different currency, so it renders
+ * through the same table — only the unit changes.
+ */
+export function Statement({
+  lines,
+  unit = 'money',
+}: {
+  lines: StatementLine[]
+  unit?: 'money' | 'points'
+}) {
+  const format = unit === 'points' ? formatPoints : formatMoney
+
   if (!lines.length) {
     return (
       <EmptyState
         icon="receipt"
         title="No transactions yet"
-        body="Your wallet activity will show here."
+        body={
+          unit === 'points'
+            ? 'Reward points you earn will show here.'
+            : 'Your wallet activity will show here.'
+        }
       />
     )
   }
@@ -58,10 +78,10 @@ export function Statement({ lines }: { lines: StatementLine[] }) {
                 }`}
               >
                 {line.direction === 'credit' ? '+' : '−'}
-                {formatMoney(line.amount)}
+                {format(line.amount)}
               </td>
               <td className="whitespace-nowrap py-2.5 text-right text-muted">
-                {formatMoney(line.balance_after)}
+                {format(line.balance_after)}
               </td>
             </tr>
           ))}

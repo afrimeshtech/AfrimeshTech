@@ -57,6 +57,11 @@ export const EVENT = {
   RiderPaid: 'rider.paid',
   CashbackEarned: 'cashback.earned',
 
+  // rewards
+  ReferralCreated: 'referral.created',
+  ReferralRewarded: 'referral.rewarded',
+  PointsRedeemed: 'points.redeemed',
+
   // logistics
   DeliveryRequested: 'delivery.requested',
   DeliveryAccepted: 'delivery.accepted',

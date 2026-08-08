@@ -35,17 +35,12 @@ export const DEFAULT_LOCATION: BuyerLocation = {
   source: 'default',
 }
 
-/** Areas offered in the location picker for the pilot city and beyond. */
-export const KNOWN_AREAS: { label: string; lat: number; lng: number }[] = [
-  { label: 'Ikeja, Lagos', lat: 6.6018, lng: 3.3515 },
-  { label: 'Yaba, Lagos', lat: 6.5095, lng: 3.3711 },
-  { label: 'Surulere, Lagos', lat: 6.4969, lng: 3.3481 },
-  { label: 'Lekki, Lagos', lat: 6.4478, lng: 3.4723 },
-  { label: 'Apapa, Lagos', lat: 6.4491, lng: 3.3592 },
-  { label: 'Wuse, Abuja', lat: 9.0765, lng: 7.4586 },
-  { label: 'Sabon Gari, Kano', lat: 12.0022, lng: 8.5236 },
-  { label: 'Port Harcourt', lat: 4.8156, lng: 7.0498 },
-]
+/**
+ * Areas offered in the location picker. They live in `lib/areas` because the
+ * territory analytics name places from the same list, and that code runs where
+ * this module's `server-only` cookie access cannot follow.
+ */
+export { KNOWN_AREAS } from '@/lib/areas'
 
 export const buyerLocation = cache(async (): Promise<BuyerLocation> => {
   const jar = await cookies()

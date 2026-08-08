@@ -5,6 +5,8 @@ import { logoutAction } from '@/app/actions/session'
 import { requireUser, currentOrganisation, ADMIN_ROLES } from '@/lib/auth'
 import { formatMoney } from '@/lib/money'
 import { getBalance } from '@/modules/wallet/service'
+import { pointsBalance, rewardsBeneficiary } from '@/modules/rewards/service'
+import { formatPoints } from '@/lib/points'
 import { consumerKpis } from '@/modules/analytics/service'
 
 export const dynamic = 'force-dynamic'
@@ -12,15 +14,23 @@ export const metadata = { title: 'Account' }
 
 export default async function AccountPage() {
   const user = await requireUser('/account')
-  const [org, wallet, kpis] = await Promise.all([
+  const [org, wallet, kpis, beneficiary] = await Promise.all([
     currentOrganisation(),
     getBalance('user', user.id),
     consumerKpis(user.id),
+    rewardsBeneficiary(user.id),
   ])
+  const points = await pointsBalance(beneficiary.type, beneficiary.id)
 
   const links = [
     { href: '/orders', label: 'Orders', icon: 'box', hint: 'Track and review your purchases' },
     { href: '/wallet', label: 'Wallet', icon: 'wallet', hint: 'Balance, top-ups and statements' },
+    {
+      href: '/rewards',
+      label: 'Rewards',
+      icon: 'star-filled',
+      hint: 'Invite people and convert points to cash',
+    },
     {
       href: '/favourites',
       label: 'Saved',
@@ -53,9 +63,15 @@ export default async function AccountPage() {
           </div>
         </Card>
 
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
           <Stat label="Wallet" value={formatMoney(wallet.available)} />
           <Stat label="In escrow" value={formatMoney(wallet.locked)} />
+          <Stat
+            label="Reward points"
+            value={formatPoints(points.available)}
+            hint={`Worth ${formatMoney(points.redeemableValue)}`}
+            icon="star-filled"
+          />
           <Stat label="Orders" value={kpis.orders} />
           <Stat label="Saved items" value={kpis.saved_favourites} />
         </div>

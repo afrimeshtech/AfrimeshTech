@@ -21,6 +21,7 @@ import {
   InsufficientFundsError,
 } from '@/modules/wallet/service'
 import { requestDelivery, cancelOpenJob, riderWasPaid } from '@/modules/logistics/service'
+import { qualifyReferral } from '@/modules/rewards/service'
 import { canTrade, priceColumnFor, TIER } from '@/lib/tiers'
 import { haversineKm, estimateEtaMinutes } from '@/lib/geo'
 import { platformFee, cashbackFor, DEFAULT_CURRENCY } from '@/lib/money'
@@ -633,6 +634,15 @@ export async function advanceOrder(
           tx,
         )
       }
+
+      // Referral settlement. Whoever invited this buyer earns now, on a real
+      // completed order - not when the buyer signed up (rewards module).
+      await qualifyReferral(tx, {
+        referredUserId: order.buyer_user_id,
+        orderId: order.id,
+        orderNumber: order.order_number,
+        subtotal: order.subtotal,
+      })
 
       await recomputeFulfilmentRate(tx, order.seller_org_id)
       await publish(

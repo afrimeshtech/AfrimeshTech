@@ -13,6 +13,8 @@ import { setWeight, type RankingScope } from '@/modules/recommendation/service'
 import { resolveAlert, runRiskSweep } from '@/modules/platform/service'
 import { retryPending } from '@/modules/notifications/service'
 import { expireStaleReservations } from '@/modules/inventory/service'
+import { setReferralPoints } from '@/modules/rewards/service'
+import { PROGRAMMES, type Programme } from '@/lib/points'
 
 import { parseForm, z, uuid, requiredText } from '@/lib/forms'
 
@@ -139,6 +141,45 @@ export async function updateWeightsAction(
   revalidatePath('/admin/ranking')
   revalidatePath('/about')
   return { notice: `${written} weights updated — ranking changes take effect on the next search.` }
+}
+
+const referralPointsSchema = z.object(
+  Object.fromEntries(
+    PROGRAMMES.map((programme) => [
+      `points_${programme}`,
+      z.coerce
+        .number({ message: `The ${programme} award must be a number.` })
+        .int({ message: `The ${programme} award must be a whole number of points.` })
+        .min(0, { message: `The ${programme} award cannot be negative.` })
+        .max(1_000_000, { message: `The ${programme} award is unrealistically large.` }),
+    ]),
+  ) as Record<string, z.ZodType<number>>,
+)
+
+/**
+ * Retune the referral programme. Award values are data, not code, for the same
+ * reason the ranking weights are: growth incentives get adjusted on a weekly
+ * cadence and must never require a deployment.
+ */
+export async function updateReferralPointsAction(
+  _prev: AdminActionState,
+  formData: FormData,
+): Promise<AdminActionState> {
+  await requireMutatingAdmin()
+
+  const parsed = parseForm(referralPointsSchema, formData)
+  if (!parsed.ok) return { error: parsed.error }
+
+  const values: Partial<Record<Programme, number>> = {}
+  for (const programme of PROGRAMMES) {
+    values[programme] = parsed.data[`points_${programme}`] as number
+  }
+  await setReferralPoints(values)
+
+  revalidatePath('/admin/rewards')
+  revalidatePath('/rewards')
+  revalidatePath('/partner/rewards')
+  return { notice: 'Referral awards updated — they apply to every referral settled from now on.' }
 }
 
 export async function resolveAlertAction(formData: FormData) {

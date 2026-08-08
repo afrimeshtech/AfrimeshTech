@@ -25,9 +25,19 @@ import { searchProducts } from '@/modules/search/service'
 import { rankOffers, setWeight, getWeights } from '@/modules/recommendation/service'
 import { openJobs, acceptJob, markPickedUp, completeDelivery } from '@/modules/logistics/service'
 import { sendMessage, readThread } from '@/modules/messaging/service'
+import { authenticateWithOtp, requestOtp } from '@/modules/identity/service'
+import { activeLocations, audienceForSeller, territorySummary } from '@/modules/territory/service'
+import {
+  attachReferral,
+  qualifyReferral,
+  redeemPoints,
+  referralCodeFor,
+  referralPoints,
+} from '@/modules/rewards/service'
 import { withTx } from '@/db/client'
 import { TIER } from '@/lib/tiers'
-import { cashbackFor } from '@/lib/money'
+import { cashbackFor, DEFAULT_CURRENCY } from '@/lib/money'
+import { POINTS_CURRENCY, REFERRAL_MIN_ORDER_MINOR, programmeForRole } from '@/lib/points'
 
 /** Deterministic id of the platform logistics wallet (see wallet service). */
 const LOGISTICS_WALLET_ID = '00000000-0000-4000-8000-000000000003'
@@ -565,6 +575,331 @@ if (
       ' above already prove each weighting selects on its own factor.',
   )
 }
+
+// ---------------------------------------------------------------------------
+console.log('\nRewards — The referral programme')
+// ---------------------------------------------------------------------------
+
+// Every assertion below runs inside one transaction that is deliberately rolled
+// back, so a verification run never leaves a referral, a point or a
+// notification behind and the script stays safe to re-run.
+class Rollback extends Error {}
+
+/** Deterministic ids of the platform wallets (see wallet service). */
+const POINTS_WALLET_ID = '00000000-0000-4000-8000-000000000004'
+const REVENUE_WALLET_ID = '00000000-0000-4000-8000-000000000002'
+const musaId = stranger.id
+
+const adaCode = await referralCodeFor(ada.id)
+check('A member can be issued an invite code', /^[A-Z2-9]{7}$/.test(adaCode), adaCode)
+check(
+  'The code is stable — asking twice returns the same one',
+  (await referralCodeFor(ada.id)) === adaCode,
+)
+
+const pointsOf = async (tx: typeof sql, ownerType: string, ownerId: string) =>
+  (
+    await tx.one<{ available: number }>(
+      `SELECT available FROM wallets
+        WHERE owner_type = $1 AND owner_id = $2 AND currency = $3`,
+      [ownerType, ownerId, POINTS_CURRENCY],
+    )
+  )?.available ?? 0
+
+try {
+  await withTx(async (tx) => {
+    const linked = await attachReferral({ referredUserId: musaId, code: adaCode }, tx)
+    check('A new member can join on an invite code', linked === 'linked', linked)
+
+    check(
+      'A member can only ever be referred once',
+      (await attachReferral({ referredUserId: musaId, code: adaCode }, tx)) === 'already_referred',
+    )
+    check(
+      'Nobody can refer themselves',
+      (await attachReferral({ referredUserId: ada.id, code: adaCode }, tx)) === 'self',
+    )
+    check(
+      'An unrecognised code links nothing',
+      (await attachReferral({ referredUserId: musaId, code: 'ZZZZZZZ' }, tx)) === 'unknown_code',
+    )
+
+    // Below the floor: the referral must stay pending rather than pay out.
+    const tooSmall = await qualifyReferral(tx, {
+      referredUserId: musaId,
+      orderId: riderOrder.id,
+      orderNumber: riderOrder.order_number,
+      subtotal: Math.max(0, REFERRAL_MIN_ORDER_MINOR - 1),
+    })
+    check('An order below the qualifying value pays nothing', tooSmall === null)
+    check(
+      'That referral is still pending, so a later order can still earn it',
+      (
+        await tx.one<{ status: string }>(
+          `SELECT status FROM referrals WHERE referred_user_id = $1`,
+          [musaId],
+        )
+      )?.status === 'pending',
+    )
+
+    const balanceBefore = await pointsOf(tx, 'user', ada.id)
+    const floatBefore = await pointsOf(tx, 'platform', POINTS_WALLET_ID)
+    const expected = (await referralPoints(tx))[programmeForRole('consumer')]
+
+    const rewarded = await qualifyReferral(tx, {
+      referredUserId: musaId,
+      orderId: riderOrder.id,
+      orderNumber: riderOrder.order_number,
+      subtotal: REFERRAL_MIN_ORDER_MINOR,
+    })
+    check(
+      'A qualifying order settles the referral',
+      rewarded?.points === expected,
+      `${rewarded?.points} points under the ${rewarded?.programme} programme`,
+    )
+
+    const balanceAfter = await pointsOf(tx, 'user', ada.id)
+    check(
+      'The referrer is credited in reward points',
+      balanceAfter === balanceBefore + expected,
+      `${balanceBefore} → ${balanceAfter}`,
+    )
+
+    // Points are issued against a liability, never conjured: the platform's
+    // points float must fall by exactly what was credited.
+    const floatAfter = await pointsOf(tx, 'platform', POINTS_WALLET_ID)
+    check(
+      'Points are issued against the platform liability, not created',
+      floatAfter === floatBefore - expected,
+      `points float ${floatBefore} → ${floatAfter}`,
+    )
+
+    check(
+      'The same referral cannot be paid twice',
+      (await qualifyReferral(tx, {
+        referredUserId: musaId,
+        orderId: riderOrder.id,
+        orderNumber: riderOrder.order_number,
+        subtotal: REFERRAL_MIN_ORDER_MINOR,
+      })) === null,
+    )
+
+    // --- Converting points to cash -----------------------------------------
+
+    const cashOf = async (ownerType: string, ownerId: string) =>
+      (
+        await tx.one<{ available: number }>(
+          `SELECT available FROM wallets
+            WHERE owner_type = $1 AND owner_id = $2 AND currency = $3`,
+          [ownerType, ownerId, DEFAULT_CURRENCY],
+        )
+      )?.available ?? 0
+
+    await expectRejection(
+      'A conversion below the floor is refused',
+      () => redeemPoints('user', ada.id, 1, tx),
+      'upwards',
+    )
+    await expectRejection(
+      'Nobody can convert more points than they hold',
+      () => redeemPoints('user', ada.id, balanceAfter + 1, tx),
+      'Insufficient',
+    )
+
+    const cashBefore = await cashOf('user', ada.id)
+    const revenueBefore = await cashOf('platform', REVENUE_WALLET_ID)
+    const redemption = await redeemPoints('user', ada.id, expected, tx)
+
+    check(
+      'Converting points burns them',
+      (await pointsOf(tx, 'user', ada.id)) === balanceAfter - expected,
+      `${balanceAfter} → ${await pointsOf(tx, 'user', ada.id)} points`,
+    )
+    check(
+      'The naira lands in the same holder’s spendable balance',
+      (await cashOf('user', ada.id)) === cashBefore + redemption.amount,
+      `+${redemption.amount} for ${expected} points`,
+    )
+    check(
+      'The cash comes out of platform revenue, like cashback',
+      (await cashOf('platform', REVENUE_WALLET_ID)) === revenueBefore - redemption.amount,
+      `revenue ${revenueBefore} → ${await cashOf('platform', REVENUE_WALLET_ID)}`,
+    )
+
+    throw new Rollback()
+  })
+} catch (err) {
+  if (!(err instanceof Rollback)) throw err
+}
+
+check(
+  'The verification run left no referral behind',
+  !(await sql.one(`SELECT id FROM referrals WHERE referred_user_id = $1`, [musaId])),
+)
+
+// Phone + OTP creates the account on first use, so it is a sign-up path as
+// much as a sign-in one and an invitation has to survive it. This one cannot
+// run inside a rolled-back transaction - the OTP is issued and consumed
+// through the identity module's own connection - so it uses a throwaway
+// number and deletes the account afterwards.
+const inviteePhone = '+2348000000199'
+await sql.query(`DELETE FROM users WHERE phone = $1`, [inviteePhone])
+
+const firstOtp = await requestOtp(inviteePhone, 'login')
+if (!firstOtp.devCode) {
+  console.log('  SKIP  Invitations survive phone + OTP — an SMS provider is configured, so the')
+  console.log('        code is delivered out of band and this script cannot read it.')
+} else {
+  const first = await authenticateWithOtp(inviteePhone, firstOtp.devCode)
+  check('Phone + OTP creates the account on first sign-in', first.created)
+
+  const outcome = await attachReferral({ referredUserId: first.user.id, code: adaCode })
+  check('An invitation is credited on the phone + OTP sign-up path', outcome === 'linked', outcome)
+  check(
+    'It is credited to the member whose code was used',
+    (
+      await sql.one<{ referrer_user_id: string }>(
+        `SELECT referrer_user_id FROM referrals WHERE referred_user_id = $1`,
+        [first.user.id],
+      )
+    )?.referrer_user_id === ada.id,
+  )
+
+  const secondOtp = await requestOtp(inviteePhone, 'login')
+  const second = await authenticateWithOtp(inviteePhone, secondOtp.devCode!)
+  check(
+    'Signing in again is a returning member, not a new account',
+    !second.created && second.user.id === first.user.id,
+  )
+
+  // A returning member has nobody to credit - the action gates on `created`,
+  // and the referral table refuses a second claim regardless.
+  check(
+    'A returning member cannot be claimed by another code',
+    (await attachReferral({ referredUserId: first.user.id, code: adaCode })) === 'already_referred',
+  )
+
+  await sql.query(`DELETE FROM users WHERE id = $1`, [first.user.id])
+  check(
+    'The throwaway account and its referral are cleaned up',
+    !(await sql.one(`SELECT id FROM users WHERE id = $1`, [first.user.id])) &&
+      !(await sql.one(`SELECT id FROM referrals WHERE referred_user_id = $1`, [first.user.id])),
+  )
+}
+
+// ---------------------------------------------------------------------------
+console.log('\nTerritory — Where the demand is')
+// ---------------------------------------------------------------------------
+
+const consumerAreas = await activeLocations({
+  audience: 'consumer',
+  origin: { lat: grace.lat, lng: grace.lng },
+  radiusKm: 50,
+  days: 365,
+  minActors: 1,
+  ownOrgId: grace.id,
+})
+check(
+  'An outlet can see which areas its shoppers are buying from',
+  consumerAreas.length > 0,
+  `${consumerAreas.length} area(s), busiest ${consumerAreas[0]?.label}`,
+)
+check(
+  'Areas are ranked with the busiest first',
+  consumerAreas.every((cell, i) => i === 0 || cell.actors <= consumerAreas[i - 1].actors),
+)
+check(
+  'Every area is named as a place, not as coordinates',
+  consumerAreas.every((cell) => /[A-Za-z]/.test(cell.label)),
+  consumerAreas
+    .slice(0, 3)
+    .map((c) => c.label)
+    .join(' · '),
+)
+check(
+  'Each area is measured from the business asking',
+  consumerAreas.every((cell) => cell.distance_km !== null && cell.distance_km <= 50),
+)
+check(
+  'A seller sees how much of its own territory it serves',
+  consumerAreas.some((cell) => cell.own_orders > 0),
+  `${consumerAreas.reduce((sum, c) => sum + c.own_orders, 0)} of ` +
+    `${consumerAreas.reduce((sum, c) => sum + c.orders, 0)} orders are Grace Stores'`,
+)
+
+// Each tier reads the tier it sells to - the whole point of the feature.
+check('An outlet reads consumer demand', audienceForSeller('outlet') === 'consumer')
+check('A merchant reads outlet demand', audienceForSeller('merchant') === 'outlet')
+check('A warehouse reads merchant demand', audienceForSeller('warehouse') === 'merchant')
+
+const outletAreas = await activeLocations({
+  audience: 'outlet',
+  origin: { lat: mushin.lat, lng: mushin.lng },
+  days: 365,
+  minActors: 1,
+})
+check(
+  'A merchant sees which areas its retail outlets buy from',
+  outletAreas.length > 0,
+  `${outletAreas.length} area(s), busiest ${outletAreas[0]?.label}`,
+)
+check(
+  'The two tiers are genuinely different populations',
+  // Consumer orders are B2C and outlet orders are B2B; if these matched, the
+  // tier filter would not be doing anything.
+  consumerAreas.reduce((s, c) => s + c.orders, 0) !== outletAreas.reduce((s, c) => s + c.orders, 0),
+)
+
+// The privacy floor: a cell must never be narrow enough to point at a person.
+const guarded = await activeLocations({
+  audience: 'consumer',
+  origin: { lat: grace.lat, lng: grace.lng },
+  radiusKm: 50,
+  days: 365,
+  minActors: 99,
+})
+check(
+  'Areas with too few distinct buyers are withheld entirely',
+  guarded.length === 0,
+  `${guarded.length} area(s) survived a 99-buyer floor`,
+)
+
+const territoryTotals = await territorySummary({
+  audience: 'consumer',
+  origin: { lat: grace.lat, lng: grace.lng },
+  radiusKm: 50,
+  days: 365,
+  ownOrgId: grace.id,
+})
+check(
+  'Territory totals never claim more of the trade than the business served',
+  territoryTotals.own_orders <= territoryTotals.orders && territoryTotals.own_orders > 0,
+  `${territoryTotals.own_orders} of ${territoryTotals.orders} orders in range`,
+)
+
+// A radius must actually exclude what falls outside it.
+const wide = await activeLocations({
+  audience: 'consumer',
+  origin: { lat: grace.lat, lng: grace.lng },
+  radiusKm: 500,
+  days: 365,
+  minActors: 1,
+  limit: 100,
+})
+const narrow = await activeLocations({
+  audience: 'consumer',
+  origin: { lat: grace.lat, lng: grace.lng },
+  radiusKm: 1,
+  days: 365,
+  minActors: 1,
+  limit: 100,
+})
+check(
+  'Narrowing the radius narrows the territory',
+  narrow.length <= wide.length &&
+    narrow.every((cell) => (cell.distance_km ?? 0) <= (wide.at(-1)?.distance_km ?? Infinity) + 500),
+  `${wide.length} area(s) within 500 km, ${narrow.length} within 1 km`,
+)
 
 // ---------------------------------------------------------------------------
 console.log('\nPRD CTO note — Event logging from day one')

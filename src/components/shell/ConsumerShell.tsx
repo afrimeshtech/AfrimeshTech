@@ -54,6 +54,7 @@ export async function ConsumerShell({
                     : [{ href: '/login', label: 'Sign in', icon: 'user' as const }]),
                   { href: '/orders', label: 'Orders', icon: 'box' as const },
                   { href: '/wallet', label: 'Wallet', icon: 'wallet' as const },
+                  { href: '/rewards', label: 'Rewards', icon: 'star-filled' as const },
                   { href: '/favourites', label: 'Saved', icon: 'bookmark' as const },
                   {
                     href: '/messages',

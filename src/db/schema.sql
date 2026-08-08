@@ -18,6 +18,7 @@
 --   orders        orders, order_items, order_events
 --   payments      payments
 --   wallet        wallets, ledger_transactions, ledger_entries
+--   rewards       referrals  (points live in wallets, in the PTS currency)
 --   logistics     deliveries
 --   notifications notifications
 --   analytics     search_queries, product_views, ratings, favourites
@@ -26,6 +27,11 @@
 -- MONEY: every monetary column is a BIGINT in the currency's *minor unit*
 -- (kobo for NGN). Integers only - required for the double-entry wallet ledger
 -- to balance exactly (SAD "Wallet Architecture").
+--
+-- POINTS: reward points are held in the same wallets and the same ledger, as a
+-- separate currency ('PTS'). They are therefore double-entry, auditable and
+-- visible on a statement for free, and a point can never be conjured into
+-- existence - it is issued against the platform's points-float liability.
 -- ===========================================================================
 
 -- ---------------------------------------------------------------------------
@@ -103,8 +109,16 @@ CREATE TYPE ledger_txn_type AS ENUM (
   'refund',
   'escrow_hold',
   'escrow_release',
-  'cashback'
+  'cashback',
+  -- Reward points issued for a qualified referral (PTS currency).
+  'referral_reward',
+  -- Points burned, and the matching naira paid out of platform revenue.
+  'points_redemption'
 );
+
+-- A referral is pending until the person invited actually transacts; it is
+-- void if the invitation is disqualified (self-referral, reversed order).
+CREATE TYPE referral_status AS ENUM ('pending', 'rewarded', 'void');
 
 CREATE TYPE notification_channel AS ENUM ('in_app', 'push', 'sms', 'email');
 CREATE TYPE notification_status  AS ENUM ('queued', 'sent', 'failed');
@@ -138,12 +152,20 @@ CREATE TABLE users (
   city               TEXT,
   state              TEXT,
   country            TEXT        NOT NULL DEFAULT 'NG',
+
+  -- Referral programme (rewards module). The code is minted lazily the first
+  -- time someone opens their rewards screen, so existing accounts need no
+  -- migration and accounts that never refer anyone carry no code at all.
+  referral_code       TEXT UNIQUE,
+  referred_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_login_at      TIMESTAMPTZ,
   CONSTRAINT users_contact_present CHECK (phone IS NOT NULL OR email IS NOT NULL)
 );
 
-CREATE INDEX users_role_idx ON users (role);
+CREATE INDEX users_role_idx     ON users (role);
+CREATE INDEX users_referrer_idx ON users (referred_by_user_id);
 
 CREATE TABLE sessions (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -494,6 +516,47 @@ CREATE TABLE ledger_entries (
 
 CREATE INDEX ledger_entries_wallet_idx ON ledger_entries (wallet_id, created_at DESC);
 CREATE INDEX ledger_entries_txn_idx    ON ledger_entries (transaction_id);
+
+-- ---------------------------------------------------------------------------
+-- MODULE: rewards - the referral programme
+--
+-- "Refer a shop like yours." Each tier grows the tier below its supplier:
+-- a consumer brings another consumer to a retail outlet, an outlet brings
+-- another outlet to a merchant, a merchant brings another merchant to a
+-- warehouse. The programme a referral belongs to is therefore the referrer's
+-- own tier, recorded at the moment the reward is paid.
+--
+-- Nothing is paid on sign-up. A referral only earns once the person invited
+-- completes a real order above a floor value, which is what stops the
+-- programme paying for accounts rather than for commerce.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE referrals (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  referrer_user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- UNIQUE: a person can be referred exactly once, ever. Without this the same
+  -- account could be re-credited by every referrer who got hold of its id.
+  referred_user_id    UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  code                TEXT NOT NULL,
+  -- consumer | outlet | merchant | warehouse | manufacturer
+  programme           TEXT NOT NULL DEFAULT 'consumer',
+  status              referral_status NOT NULL DEFAULT 'pending',
+
+  points_awarded      BIGINT NOT NULL DEFAULT 0 CHECK (points_awarded >= 0),
+  -- Who the points went to. A business owner's referral earns for the
+  -- business, not for their personal wallet.
+  beneficiary_type    TEXT CHECK (beneficiary_type IN ('user', 'organisation')),
+  beneficiary_id      UUID,
+
+  qualifying_order_id UUID REFERENCES orders(id) ON DELETE SET NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  rewarded_at         TIMESTAMPTZ,
+
+  CONSTRAINT referrals_no_self CHECK (referrer_user_id <> referred_user_id)
+);
+
+CREATE INDEX referrals_referrer_idx ON referrals (referrer_user_id, created_at DESC);
+CREATE INDEX referrals_pending_idx  ON referrals (referred_user_id) WHERE status = 'pending';
 
 -- ---------------------------------------------------------------------------
 -- MODULE: payments

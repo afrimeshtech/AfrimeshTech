@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { AdminShell } from '@/components/shell/AdminShell'
 import { BarSeries } from '@/components/charts/BarSeries'
+import { ActivityPanel } from '@/components/territory/ActivityPanel'
 import { Alert, Badge, Card, SectionHeading, Stat } from '@/components/ui'
 import { requireRole, ADMIN_ROLES } from '@/lib/auth'
 import { formatMoney, formatMoneyCompact } from '@/lib/money'
@@ -101,6 +102,21 @@ export default async function AdminHome() {
           </div>
         </section>
 
+        {/* Every other dashboard leads with the demand it can act on; the
+            console should too, rather than making an operations lead open a
+            second page to find out where the network actually is. */}
+        <ActivityPanel
+          audience="consumer"
+          title="Where the network is busiest"
+          subtitle="Retail demand over the last 90 days — the base of the whole chain. Every tier's map is on the demand map."
+          origin={null}
+          originLabel="Network centre"
+          days={90}
+          limit={5}
+          minActors={1}
+          moreHref="/admin/locations"
+        />
+
         <div className="grid gap-4 lg:grid-cols-[1fr_20rem]">
           <Card>
             <SectionHeading
@@ -153,15 +169,19 @@ export default async function AdminHome() {
               />
               <Row label="Total debits" value={formatMoney(integrity.totalDebits)} ok />
               <Row label="Total credits" value={formatMoney(integrity.totalCredits)} ok />
-              <Row
-                label="Net wallet position"
-                value={formatMoney(integrity.netWalletPosition)}
-                ok={integrity.netWalletPosition === 0}
-              />
+              {integrity.positionsByCurrency.map((position) => (
+                <Row
+                  key={position.currency}
+                  label={`Net position (${position.currency})`}
+                  value={Number(position.net).toLocaleString('en-NG')}
+                  ok={Number(position.net) === 0}
+                />
+              ))}
             </dl>
             <p className="mt-3 border-t border-line-soft pt-3 text-xs text-muted">
-              Net wallet position must be exactly zero: customer balances are offset by the platform
-              float. Any other figure means value was created or destroyed.
+              Every net position must be exactly zero, in each currency: member balances are offset
+              by the platform float, and reward points by the points float. Any other figure means
+              value was created or destroyed.
             </p>
           </Card>
 

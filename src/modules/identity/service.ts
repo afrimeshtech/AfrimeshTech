@@ -245,21 +245,32 @@ export async function verifyOtp(
   return true
 }
 
-/** Log in by phone + OTP, creating the account on first use. */
-export async function authenticateWithOtp(phoneRaw: string, code: string): Promise<User> {
+/**
+ * Log in by phone + OTP, creating the account on first use.
+ *
+ * `created` distinguishes a first-ever sign-in from a returning one. Callers
+ * need it because some things may only happen once, at the point a person
+ * actually joins - crediting whoever invited them, for one. Without it the
+ * caller would have to infer "new account" from timestamps, and get it wrong.
+ */
+export async function authenticateWithOtp(
+  phoneRaw: string,
+  code: string,
+): Promise<{ user: User; created: boolean }> {
   const ok = await verifyOtp(phoneRaw, code, 'login')
   if (!ok) throw new AuthError('That code is incorrect or has expired')
 
   const sql = await getSql()
   const phone = normalisePhone(phoneRaw)
   let user = await sql.one<User>(`SELECT * FROM users WHERE phone = $1`, [phone])
+  const created = !user
 
   if (!user) {
     user = await registerUser({ fullName: 'AfriMesh User', phone: phoneRaw })
   }
   await sql.query(`UPDATE users SET phone_verified = TRUE WHERE id = $1`, [user.id])
   await touchLogin(user.id)
-  return { ...user, phone_verified: true }
+  return { user: { ...user, phone_verified: true }, created }
 }
 
 async function touchLogin(userId: string) {

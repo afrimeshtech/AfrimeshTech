@@ -56,6 +56,44 @@ export function distanceKmSqlOn(
 }
 
 /**
+ * Initial bearing from one point to another, in degrees clockwise from north.
+ */
+export function bearingDegrees(from: LatLng, to: LatLng): number {
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const dLng = toRad(to.lng - from.lng)
+  const lat1 = toRad(from.lat)
+  const lat2 = toRad(to.lat)
+  const y = Math.sin(dLng) * Math.cos(lat2)
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng)
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360
+}
+
+const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'] as const
+
+/** "NE" - a direction a person can act on, rather than 43.7°. */
+export function compassPoint(from: LatLng, to: LatLng): string {
+  return COMPASS[Math.round(bearingDegrees(from, to) / 45) % 8]
+}
+
+/**
+ * The side of a square grid cell, expressed in degrees of latitude.
+ *
+ * Activity is aggregated into cells rather than reported per address: a
+ * neighbourhood is the unit a shopkeeper can act on, and a single buyer's
+ * doorstep is nobody else's business.
+ *
+ * One degree of latitude is ~111 km everywhere. A degree of longitude shrinks
+ * towards the poles, so cells run about 1% wider east-west than north-south at
+ * Nigerian latitudes - far below the resolution any of this is read at, and
+ * worth it to keep a cell's identity a plain function of its coordinates.
+ */
+export const KM_PER_DEGREE = 111.045
+
+export function cellDegrees(cellKm: number): number {
+  return cellKm / KM_PER_DEGREE
+}
+
+/**
  * Rough delivery-time estimate. Urban African road speeds vary widely, so this
  * is deliberately conservative: a fixed dispatch overhead plus travel time.
  * Replaced by the logistics engine's route optimisation in Phase 2.

@@ -1,15 +1,17 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
-import { Wordmark } from '@/components/brand/Logo'
+import { RiderShell } from '@/components/shell/RiderShell'
 import { AcceptJobButton, CompleteDeliveryForm, PickUpButton } from '@/components/rider/JobActions'
-import { Badge, Card, EmptyState, SectionHeading, Stat } from '@/components/ui'
-import { logoutAction } from '@/app/actions/session'
+import { Badge, Card, EmptyState, LinkButton, SectionHeading, Stat } from '@/components/ui'
 import { requireUser } from '@/lib/auth'
 import { buyerLocation } from '@/lib/location'
 import { formatMoney } from '@/lib/money'
 import { formatDistance, formatEta } from '@/lib/geo'
 import { openJobs, riderJobs, riderStats, type DeliveryJob } from '@/modules/logistics/service'
 import { getBalance } from '@/modules/wallet/service'
+import { pointsBalance, referralSummary } from '@/modules/rewards/service'
+import { ActivityPanel } from '@/components/territory/ActivityPanel'
+import { formatPoints } from '@/lib/points'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Deliveries' }
@@ -34,43 +36,21 @@ export default async function RiderPage({
   const location = await buyerLocation()
   const radius = Number(params.radius ?? 20)
 
-  const [open, active, history, stats, wallet] = await Promise.all([
+  const [open, active, history, stats, wallet, points, referrals] = await Promise.all([
     openJobs({ lat: location.lat, lng: location.lng }, { radiusKm: radius }),
     riderJobs(user.id, { active: true }),
     riderJobs(user.id, { limit: 10 }),
     riderStats(user.id),
     getBalance('user', user.id),
+    pointsBalance('user', user.id),
+    referralSummary(user.id),
   ])
 
   const completed = history.filter((j) => j.status === 'delivered')
 
   return (
-    <div className="min-h-screen bg-surface">
-      <header className="bg-bar">
-        <div className="mx-auto flex w-full max-w-4xl flex-wrap items-center justify-between gap-3 px-4 py-3">
-          <Link href="/rider">
-            <Wordmark size="sm" priority />
-          </Link>
-          <div className="flex items-center gap-3">
-            <span className="text-right">
-              <span className="block text-sm font-semibold text-white">{user.full_name}</span>
-              <span className="block text-xs text-white/70">
-                Delivery partner · {location.label}
-              </span>
-            </span>
-            <form action={logoutAction}>
-              <button
-                type="submit"
-                className="rounded-brand px-3 py-1.5 text-sm font-medium text-white/70 hover:bg-white/10"
-              >
-                Sign out
-              </button>
-            </form>
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto w-full max-w-4xl space-y-8 px-4 py-8">
+    <RiderShell name={user.full_name} locationLabel={location.label} active="/rider">
+      <div className="space-y-8">
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <Stat label="Wallet" value={formatMoney(wallet.available)} />
           <Stat label="Earned (30 days)" value={formatMoney(stats.earned_30d)} />
@@ -81,6 +61,61 @@ export default async function RiderPage({
             hint={`${stats.active} in progress`}
           />
         </div>
+
+        <Card className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="font-medium text-ink">Reward points · {formatPoints(points.available)}</p>
+            <p className="text-xs text-muted">
+              {referrals.rewarded
+                ? `${referrals.rewarded} referral${referrals.rewarded === 1 ? '' : 's'} paid, worth ${formatMoney(points.redeemableValue)}. `
+                : 'Invite a shopper or a shop onto the network. '}
+              You earn when they complete their first order, and points convert to cash in your
+              wallet.
+            </p>
+          </div>
+          <LinkButton href="/rewards" variant="secondary">
+            Rewards
+          </LinkButton>
+        </Card>
+
+        <section>
+          <SectionHeading
+            title="Where the work is"
+            subtitle={`The busiest areas around ${location.label} over the last 30 days. Position yourself where the orders are being placed and you wait less between jobs.`}
+          />
+          <div className="space-y-4">
+            {/* Shoppers get the map: consumer orders are where most delivery
+                work comes from, and "which way do I ride" is a question a
+                ranked list answers far worse than a picture does. */}
+            <ActivityPanel
+              audience="consumer"
+              origin={{ lat: location.lat, lng: location.lng }}
+              originLabel="You"
+              radiusKm={Math.max(radius, 25)}
+              days={30}
+              limit={6}
+              subtitle={`Paid consumer orders within ${Math.max(radius, 25)} km, last 30 days`}
+            />
+
+            {/* The business tiers order less often but far larger — worth
+                knowing where they are, not worth a map each. */}
+            <div className="grid gap-4 lg:grid-cols-2">
+              {(['outlet', 'merchant'] as const).map((audience) => (
+                <ActivityPanel
+                  key={audience}
+                  audience={audience}
+                  origin={{ lat: location.lat, lng: location.lng }}
+                  originLabel="You"
+                  radiusKm={Math.max(radius, 25)}
+                  days={30}
+                  limit={5}
+                  compact
+                  subtitle={`Paid orders within ${Math.max(radius, 25)} km, last 30 days`}
+                />
+              ))}
+            </div>
+          </div>
+        </section>
 
         {active.length > 0 && (
           <section>
@@ -157,8 +192,8 @@ export default async function RiderPage({
             </Card>
           </section>
         )}
-      </main>
-    </div>
+      </div>
+    </RiderShell>
   )
 }
 

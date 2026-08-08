@@ -117,6 +117,15 @@ export const orgType = z.enum(['outlet', 'merchant', 'warehouse', 'manufacturer'
   message: 'Choose the kind of business you run.',
 })
 
+/**
+ * A rewards invitation code, on the two paths that create an account.
+ *
+ * Optional and never rejected for its shape: the code is checked against the
+ * database when the account is created, and a mistyped invitation must cost
+ * someone a reward at worst, never their sign-up.
+ */
+export const referralCode = z.string().trim().max(24).optional().or(z.literal(''))
+
 export const stars = z.coerce
   .number({ message: 'Choose a rating.' })
   .int()

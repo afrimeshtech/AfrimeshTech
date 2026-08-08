@@ -16,7 +16,18 @@ import { Alert, Field, inputClass } from '@/components/ui'
  * phone + OTP. Phone-first is deliberate - it is the identifier most Nigerian
  * shoppers and shopkeepers actually have and remember.
  */
-export function LoginForm({ next = '/' }: { next?: string }) {
+export function LoginForm({
+  next = '/',
+  referralCode = '',
+}: {
+  next?: string
+  /**
+   * Carried from an invitation link. Phone + OTP creates the account on first
+   * use, so someone can arrive on an invitation and never see the register
+   * form at all — the code has to survive that route too.
+   */
+  referralCode?: string
+}) {
   const [tab, setTab] = useState<'otp' | 'password'>('otp')
 
   return (
@@ -42,7 +53,13 @@ export function LoginForm({ next = '/' }: { next?: string }) {
         ))}
       </div>
 
-      {tab === 'otp' ? <OtpLogin next={next} /> : <PasswordLogin next={next} />}
+      {tab === 'otp' ? (
+        <OtpLogin next={next} referralCode={referralCode} />
+      ) : (
+        // No invite code on the password tab: an account with a password
+        // already exists, so nobody is being introduced by signing into it.
+        <PasswordLogin next={next} />
+      )}
     </div>
   )
 }
@@ -89,7 +106,7 @@ function PasswordLogin({ next }: { next: string }) {
   )
 }
 
-function OtpLogin({ next }: { next: string }) {
+function OtpLogin({ next, referralCode = '' }: { next: string; referralCode?: string }) {
   const [requestState, requestFormAction, requesting] = useActionState<FormState, FormData>(
     requestOtpAction,
     {},
@@ -106,6 +123,14 @@ function OtpLogin({ next }: { next: string }) {
     <div className="space-y-3">
       {requestState.error && <Alert tone="danger">{requestState.error}</Alert>}
       {verifyState.error && <Alert tone="danger">{verifyState.error}</Alert>}
+
+      {referralCode && (
+        <Alert tone="success">
+          You were invited with code{' '}
+          <strong className="font-technical">{referralCode.toUpperCase()}</strong>. If this is your
+          first time here, whoever invited you earns once your first order completes.
+        </Alert>
+      )}
 
       {!codeSent ? (
         <form action={requestFormAction} className="space-y-3">
@@ -134,6 +159,7 @@ function OtpLogin({ next }: { next: string }) {
         <form action={verifyFormAction} className="space-y-3">
           <input type="hidden" name="next" value={next} />
           <input type="hidden" name="phone" value={phone} />
+          <input type="hidden" name="referralCode" value={referralCode} />
           <Alert tone="success">{requestState.notice}</Alert>
           {requestState.devCode && (
             <Alert tone="info">
@@ -165,13 +191,28 @@ function OtpLogin({ next }: { next: string }) {
   )
 }
 
-export function RegisterForm({ next = '/' }: { next?: string }) {
+export function RegisterForm({
+  next = '/',
+  referralCode = '',
+}: {
+  next?: string
+  /** Prefilled from ?ref= on an invitation link. */
+  referralCode?: string
+}) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(registerAction, {})
 
   return (
     <form action={formAction} className="space-y-3">
       <input type="hidden" name="next" value={next} />
       {state.error && <Alert tone="danger">{state.error}</Alert>}
+
+      {referralCode && (
+        <Alert tone="success">
+          You were invited with code{' '}
+          <strong className="font-technical">{referralCode.toUpperCase()}</strong>. Complete your
+          first order and whoever invited you earns their reward.
+        </Alert>
+      )}
 
       <Field label="Full name" htmlFor="fullName">
         <input id="fullName" name="fullName" className={inputClass} autoComplete="name" required />
@@ -205,6 +246,20 @@ export function RegisterForm({ next = '/' }: { next?: string }) {
           minLength={8}
         />
       </Field>
+      <Field
+        label="Invite code"
+        hint="Optional. If someone invited you, enter their code so they get credited."
+        htmlFor="reg-referral"
+      >
+        <input
+          id="reg-referral"
+          name="referralCode"
+          defaultValue={referralCode.toUpperCase()}
+          maxLength={24}
+          autoCapitalize="characters"
+          className={`${inputClass} font-technical uppercase tracking-widest`}
+        />
+      </Field>
 
       <button
         type="submit"
@@ -216,7 +271,13 @@ export function RegisterForm({ next = '/' }: { next?: string }) {
 
       <p className="text-center text-sm text-muted">
         Already registered?{' '}
-        <Link href="/login" className="font-medium text-accent-500 hover:underline">
+        <Link
+          // The invitation travels with them: phone + OTP on the sign-in page
+          // is also a sign-up, and dropping the code here would silently lose
+          // the referral for anyone who takes that route.
+          href={referralCode ? `/login?ref=${encodeURIComponent(referralCode)}` : '/login'}
+          className="font-medium text-accent-500 hover:underline"
+        >
           Sign in
         </Link>
       </p>

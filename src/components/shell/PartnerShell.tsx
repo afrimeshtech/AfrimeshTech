@@ -7,6 +7,7 @@ import { currentOrganisation, currentUser } from '@/lib/auth'
 import { ORG_LABEL, supplierTypeFor, type OrgType } from '@/lib/tiers'
 import { cartCount } from '@/lib/cart'
 import { unreadMessageCount } from '@/modules/messaging/service'
+import { audienceForSeller } from '@/modules/territory/service'
 
 /**
  * Dashboard shell for every business tier. The navigation adapts to the
@@ -39,6 +40,11 @@ export async function PartnerShell({
     { href: '/partner', label: 'Overview', icon: 'chart' },
     { href: '/partner/orders', label: `Orders from ${sellsTo}`, icon: 'inbox' },
     { href: '/partner/inventory', label: 'Inventory', icon: 'box' },
+    // Shown only where there is a tier below to read demand from — a delivery
+    // partner organisation sells to nobody, so the page would be empty.
+    ...(audienceForSeller(org.type)
+      ? [{ href: '/partner/locations', label: 'Buyer locations', icon: 'pin' as const }]
+      : []),
     { href: '/partner/catalogue', label: 'Add products', icon: 'plus' },
     ...(supplier
       ? [
@@ -54,6 +60,7 @@ export async function PartnerShell({
       : []),
     { href: '/messages', label: 'Messages', icon: 'chat', badge: unreadMessages },
     { href: '/partner/wallet', label: 'Wallet', icon: 'wallet' },
+    { href: '/partner/rewards', label: 'Rewards', icon: 'star-filled' },
     { href: '/partner/settings', label: 'Settings', icon: 'settings' },
   ]
 

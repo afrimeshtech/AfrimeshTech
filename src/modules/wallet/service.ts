@@ -41,6 +41,8 @@ export type TransactionType =
   | 'escrow_hold'
   | 'escrow_release'
   | 'cashback'
+  | 'referral_reward'
+  | 'points_redemption'
 
 export interface Wallet {
   id: string
@@ -78,6 +80,13 @@ export const PLATFORM_REVENUE = 'revenue'
  * or the seller themselves - is not known until the goods actually move.
  */
 export const PLATFORM_LOGISTICS = 'logistics'
+/**
+ * Counterparty for every reward point in circulation. Issuing points debits it
+ * and redeeming them credits it back, so its negative balance is at all times
+ * the platform's outstanding points liability - the same shape as `float`, in
+ * the points currency rather than in naira.
+ */
+export const PLATFORM_POINTS = 'points'
 
 export function reference(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}${randomBytes(4).toString('hex')}`.toUpperCase()
@@ -115,19 +124,19 @@ export async function ensureWallet(
  * Platform wallets are keyed by a deterministic UUID derived from their name,
  * so `float` and `revenue` are stable across restarts and environments.
  */
-const PLATFORM_IDS: Record<string, string> = {
+export const PLATFORM_IDS: Record<string, string> = {
   [PLATFORM_FLOAT]: '00000000-0000-4000-8000-000000000001',
   [PLATFORM_REVENUE]: '00000000-0000-4000-8000-000000000002',
   [PLATFORM_LOGISTICS]: '00000000-0000-4000-8000-000000000003',
+  [PLATFORM_POINTS]: '00000000-0000-4000-8000-000000000004',
 }
 
-export async function platformWallet(name: string, tx?: Sql): Promise<Wallet> {
-  return ensureWallet(
-    'platform',
-    PLATFORM_IDS[name] ?? PLATFORM_IDS[PLATFORM_FLOAT],
-    DEFAULT_CURRENCY,
-    tx,
-  )
+export async function platformWallet(
+  name: string,
+  tx?: Sql,
+  currency = DEFAULT_CURRENCY,
+): Promise<Wallet> {
+  return ensureWallet('platform', PLATFORM_IDS[name] ?? PLATFORM_IDS[PLATFORM_FLOAT], currency, tx)
 }
 
 export async function walletFor(
@@ -158,6 +167,12 @@ export async function postTransaction(
     narration?: string
     reference?: string
     metadata?: Record<string, unknown>
+    /**
+     * Currency of every wallet in `lines`. Naira and points never appear in
+     * the same transaction - "debits equal credits" would be meaningless
+     * across two units - so it is stated once, for the whole transaction.
+     */
+    currency?: string
     /** Platform wallets may go negative; customer wallets may not. */
     allowNegative?: string[]
   },
@@ -178,11 +193,19 @@ export async function postTransaction(
   }
 
   const ref = input.reference ?? reference(input.type.toUpperCase().slice(0, 4))
+  const currency = input.currency ?? DEFAULT_CURRENCY
 
   const txn = await tx.one<{ id: string }>(
-    `INSERT INTO ledger_transactions (reference, type, amount, narration, metadata)
-     VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-    [ref, input.type, debitTotal, input.narration ?? null, JSON.stringify(input.metadata ?? {})],
+    `INSERT INTO ledger_transactions (reference, type, amount, currency, narration, metadata)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+    [
+      ref,
+      input.type,
+      debitTotal,
+      currency,
+      input.narration ?? null,
+      JSON.stringify(input.metadata ?? {}),
+    ],
   )
   if (!txn) throw new Error('Failed to open ledger transaction')
 
@@ -198,6 +221,11 @@ export async function postTransaction(
       [line.walletId, delta],
     )
     if (!wallet) throw new Error(`Wallet ${line.walletId} not found`)
+    if (wallet.currency !== currency) {
+      throw new LedgerImbalanceError(
+        `Wallet ${line.walletId} holds ${wallet.currency}, but this ${input.type} is in ${currency}`,
+      )
+    }
 
     const mayGoNegative =
       wallet.owner_type === 'platform' || (input.allowNegative ?? []).includes(wallet.id)
@@ -566,11 +594,17 @@ export async function verifyIntegrity() {
          <> COALESCE(SUM(e.amount) FILTER (WHERE e.direction = 'credit'), 0)`,
   )
 
-  const totals = await sql.one<{ debits: number; credits: number; wallet_total: number }>(
+  const totals = await sql.one<{ debits: number; credits: number }>(
     `SELECT
        (SELECT COALESCE(SUM(amount), 0)::bigint FROM ledger_entries WHERE direction = 'debit')  AS debits,
-       (SELECT COALESCE(SUM(amount), 0)::bigint FROM ledger_entries WHERE direction = 'credit') AS credits,
-       (SELECT COALESCE(SUM(available + locked), 0)::bigint FROM wallets)                       AS wallet_total`,
+       (SELECT COALESCE(SUM(amount), 0)::bigint FROM ledger_entries WHERE direction = 'credit') AS credits`,
+  )
+
+  // Per currency, not in aggregate: naira and points are separate books, and
+  // summing them could let a surplus in one mask a shortfall in the other.
+  const positions = await sql.query<{ currency: string; net: number }>(
+    `SELECT currency, COALESCE(SUM(available + locked), 0)::bigint AS net
+       FROM wallets GROUP BY currency ORDER BY currency`,
   )
 
   return {
@@ -578,9 +612,10 @@ export async function verifyIntegrity() {
     unbalancedTransactions: unbalanced,
     totalDebits: totals?.debits ?? 0,
     totalCredits: totals?.credits ?? 0,
-    // Every wallet summed must be zero: customer credits are exactly offset by
-    // the platform float's negative balance. A non-zero figure means money was
-    // created or destroyed.
-    netWalletPosition: totals?.wallet_total ?? 0,
+    positionsByCurrency: positions,
+    // Every wallet summed must be zero, in each currency: customer credits are
+    // exactly offset by the platform float's (or points float's) negative
+    // balance. A non-zero figure means value was created or destroyed.
+    netWalletPosition: positions.reduce((sum, row) => sum + Math.abs(Number(row.net)), 0),
   }
 }

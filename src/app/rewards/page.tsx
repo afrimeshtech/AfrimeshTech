@@ -1,0 +1,35 @@
+import { redirect } from 'next/navigation'
+import { ConsumerShell } from '@/components/shell/ConsumerShell'
+import { RewardsView } from '@/components/rewards/RewardsView'
+import { SectionHeading } from '@/components/ui'
+import { requireUser, currentOrganisation } from '@/lib/auth'
+
+export const dynamic = 'force-dynamic'
+export const metadata = { title: 'Rewards' }
+
+/**
+ * The shopper's rewards screen. A consumer invites other consumers to the
+ * shops they already buy from, and earns on their first completed order.
+ */
+export default async function RewardsPage() {
+  const user = await requireUser('/rewards')
+
+  // A business owner reaching this from the storefront menu belongs on the
+  // business programme: they invite another shop like theirs, their points are
+  // held by the business, and this page's shopper wording would tell them the
+  // wrong thing about both.
+  const org = await currentOrganisation()
+  if (org) redirect('/partner/rewards')
+
+  return (
+    <ConsumerShell search={false}>
+      <div className="space-y-7">
+        <SectionHeading
+          title="Rewards"
+          subtitle="Invite people to shop where you shop. Earn points on every referral that buys, and turn them into cash."
+        />
+        <RewardsView userId={user.id} role={user.role} />
+      </div>
+    </ConsumerShell>
+  )
+}

@@ -25,6 +25,10 @@ import {
 import { inventoryStats, listInventory, expiringBatches } from '@/modules/inventory/service'
 import { ordersForSeller } from '@/modules/orders/service'
 import { getBalance } from '@/modules/wallet/service'
+import { pointsBalance, referralSummary } from '@/modules/rewards/service'
+import { audienceForSeller } from '@/modules/territory/service'
+import { ActivityPanel } from '@/components/territory/ActivityPanel'
+import { formatPoints } from '@/lib/points'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Dashboard' }
@@ -39,23 +43,27 @@ export default async function PartnerHome({
   searchParams: Promise<{ welcome?: string }>
 }) {
   const { welcome } = await searchParams
-  await requireUser('/partner')
+  const user = await requireUser('/partner')
   const org = await currentOrganisation()
   if (!org) redirect('/onboarding')
 
-  const [kpis, stock, series, top, orders, wallet, lowStock, expiring, demand] = await Promise.all([
-    sellerKpis(org.id),
-    inventoryStats(org.id),
-    sellerSalesSeries(org.id, 14),
-    topSellingProducts(org.id, 5),
-    ordersForSeller(org.id, { limit: 6 }),
-    getBalance('organisation', org.id),
-    listInventory(org.id, { lowOnly: true, limit: 6 }),
-    expiringBatches(org.id, 60),
-    unmetDemand(org.id, 5),
-  ])
+  const [kpis, stock, series, top, orders, wallet, lowStock, expiring, demand, points, referrals] =
+    await Promise.all([
+      sellerKpis(org.id),
+      inventoryStats(org.id),
+      sellerSalesSeries(org.id, 14),
+      topSellingProducts(org.id, 5),
+      ordersForSeller(org.id, { limit: 6 }),
+      getBalance('organisation', org.id),
+      listInventory(org.id, { lowOnly: true, limit: 6 }),
+      expiringBatches(org.id, 60),
+      unmetDemand(org.id, 5),
+      pointsBalance('organisation', org.id),
+      referralSummary(user.id),
+    ])
 
   const supplier = supplierTypeFor(org.tier_level)
+  const audience = audienceForSeller(org.type)
 
   return (
     <PartnerShell active="/partner">
@@ -75,7 +83,7 @@ export default async function PartnerHome({
           </p>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
           <Stat label="Revenue (30 days)" value={formatMoney(kpis.revenue_30d)} />
           <Stat
             label="Open orders"
@@ -91,6 +99,22 @@ export default async function PartnerHome({
             label="Rating"
             value={<Rating value={kpis.rating} count={kpis.rating_count} />}
             hint={`Fulfils ${Number(kpis.fulfilment_rate).toFixed(0)}% of orders`}
+          />
+          <Stat
+            label="Reward points"
+            value={formatPoints(points.available)}
+            hint={
+              referrals.rewarded
+                ? `${referrals.rewarded} referral${referrals.rewarded === 1 ? '' : 's'} · worth ${formatMoney(points.redeemableValue)}`
+                : `Worth ${formatMoney(points.redeemableValue)}`
+            }
+            icon="star-filled"
+          />
+          <Stat
+            label="Invitations pending"
+            value={referrals.pending}
+            hint="Businesses you invited that have not ordered yet"
+            icon="user"
           />
         </div>
 
@@ -125,6 +149,23 @@ export default async function PartnerHome({
             </dl>
           </Card>
         </div>
+
+        {/* High on the page, not buried at the bottom: where the demand is
+            drives the restocking decisions in every section below it. */}
+        {audience && (
+          <ActivityPanel
+            audience={audience}
+            title="Where your buyers are"
+            subtitle={`The busiest neighbourhoods within reach of ${org.name}`}
+            origin={{ lat: org.lat, lng: org.lng }}
+            originLabel={org.name}
+            radiusKm={Math.max(Math.round(Number(org.delivery_radius_km) * 2.5), 10)}
+            ownOrgId={org.id}
+            days={90}
+            limit={5}
+            moreHref="/partner/locations"
+          />
+        )}
 
         <div className="grid gap-4 lg:grid-cols-2">
           <Card>

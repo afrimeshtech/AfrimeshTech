@@ -3,6 +3,7 @@ import { CategoryRow } from '@/components/commerce/CategoryRow'
 import { ConsumerShell } from '@/components/shell/ConsumerShell'
 import { ProductResultCard } from '@/components/commerce/OfferCard'
 import { SellerThumb } from '@/components/commerce/SellerThumb'
+import { RiderNetworkView, riderRadius } from '@/components/rider/NetworkView'
 import { Badge, Card, EmptyState, LinkButton, Rating, SectionHeading } from '@/components/ui'
 import { currentUser } from '@/lib/auth'
 import { buyerLocation } from '@/lib/location'
@@ -23,8 +24,50 @@ export const dynamic = 'force-dynamic'
  * popular item that turns out to be unavailable is the exact failure the BRS
  * describes.
  */
-export default async function HomePage() {
-  const [user, location] = await Promise.all([currentUser(), buyerLocation()])
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ radius?: string; shop?: string }>
+}) {
+  const [user, location, params] = await Promise.all([currentUser(), buyerLocation(), searchParams])
+
+  /**
+   * For a delivery partner the storefront *is* the map.
+   *
+   * A rider never buys stock, so a wall of product categories tells them
+   * nothing they can act on; the shops, warehouses and waiting drop points
+   * are the whole job. `?shop=1` still opens the ordinary storefront, because
+   * a rider is also a person who can buy things — this changes the default,
+   * it does not take the shop away.
+   */
+  if (user?.role === 'delivery_partner' && !params.shop) {
+    return (
+      <ConsumerShell search={false}>
+        <div className="space-y-6">
+          <RiderNetworkView
+            userId={user.id}
+            origin={{ lat: location.lat, lng: location.lng }}
+            locationLabel={location.label}
+            radiusKm={riderRadius(params.radius)}
+            basePath="/"
+          />
+          <Card className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="font-medium text-ink">Looking to buy something yourself?</p>
+              <p className="text-xs text-muted">
+                The ordinary storefront is still here — this page just leads with the map, because
+                that is what a delivery partner needs first.
+              </p>
+            </div>
+            <LinkButton href="/?shop=1" variant="secondary">
+              Browse the shop
+            </LinkButton>
+          </Card>
+        </div>
+      </ConsumerShell>
+    )
+  }
+
   const ctx = {
     lat: location.lat,
     lng: location.lng,

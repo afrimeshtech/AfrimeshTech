@@ -13,6 +13,11 @@ const SYMBOLS: Record<string, string> = {
   USD: '$',
 }
 
+/** The symbol a currency prints with, or the code itself when we have none. */
+export function currencySymbol(currency = DEFAULT_CURRENCY): string {
+  return SYMBOLS[currency] ?? currency + ' '
+}
+
 /** 1500.50 -> 150050 */
 export function toMinor(major: number): number {
   return Math.round(major * 100)

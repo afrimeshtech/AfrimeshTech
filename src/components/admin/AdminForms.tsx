@@ -3,6 +3,7 @@
 import { useActionState, useState } from 'react'
 import {
   rejectOrganisationAction,
+  updateReferralPointsAction,
   updateWeightsAction,
   type AdminActionState,
 } from '@/app/actions/admin'
@@ -53,6 +54,77 @@ export function RejectBusinessForm({ organisationId }: { organisationId: string 
         </button>
       </div>
       {state.error && <Alert tone="danger">{state.error}</Alert>}
+    </form>
+  )
+}
+
+/**
+ * The referral programme's award ladder.
+ *
+ * The naira value of each award is shown beside it as it is typed, because
+ * "10,000 points" is not a number anyone can price in their head — and the
+ * number being set here is a direct charge against platform revenue.
+ */
+export function ReferralPointsForm({
+  points,
+  labels,
+  pointValueMinor,
+  currencySymbol,
+}: {
+  points: Record<string, number>
+  labels: Record<string, string>
+  /** Kobo per point, so the preview can be computed without a round trip. */
+  pointValueMinor: number
+  currencySymbol: string
+}) {
+  const [state, formAction, pending] = useActionState<AdminActionState, FormData>(
+    updateReferralPointsAction,
+    {},
+  )
+  const [values, setValues] = useState(points)
+
+  return (
+    <form action={formAction} className="space-y-4">
+      {state.error && <Alert tone="danger">{state.error}</Alert>}
+      {state.notice && <Alert tone="success">{state.notice}</Alert>}
+
+      {Object.entries(values).map(([programme, value]) => (
+        <div key={programme}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <label htmlFor={`points-${programme}`} className="text-sm font-medium text-ink">
+              {labels[programme] ?? programme}
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                id={`points-${programme}`}
+                name={`points_${programme}`}
+                type="number"
+                min={0}
+                step={100}
+                value={value}
+                onChange={(event) =>
+                  setValues((prev) => ({ ...prev, [programme]: Number(event.target.value) }))
+                }
+                className="w-28 rounded-brand border border-line px-2 py-1.5 text-right text-sm"
+              />
+              <span className="w-20 text-right font-technical text-xs text-muted">
+                {currencySymbol}
+                {Math.round(
+                  (Math.max(0, Math.floor(Number(value) || 0)) * pointValueMinor) / 100,
+                ).toLocaleString('en-NG')}
+              </span>
+            </div>
+          </div>
+        </div>
+      ))}
+
+      <button
+        type="submit"
+        disabled={pending}
+        className="rounded-brand bg-accent-500 px-4 py-2 text-sm font-semibold text-accent-ink hover:bg-accent-600 disabled:opacity-60"
+      >
+        {pending ? 'Saving…' : 'Save awards'}
+      </button>
     </form>
   )
 }

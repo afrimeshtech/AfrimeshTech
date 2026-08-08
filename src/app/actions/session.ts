@@ -13,6 +13,7 @@ import {
   AuthError,
   ValidationError,
 } from '@/modules/identity/service'
+import { attachReferral } from '@/modules/rewards/service'
 import { clearSession, setSessionCookie } from '@/lib/auth'
 import { LOCATION_COOKIE, encodeLocation, type BuyerLocation } from '@/lib/location'
 
@@ -25,6 +26,7 @@ import {
   requiredText,
   latitude,
   longitude,
+  referralCode,
 } from '@/lib/forms'
 
 export interface FormState {
@@ -47,6 +49,9 @@ const otpVerifySchema = z.object({
     .string()
     .trim()
     .regex(/^\d{6}$/, { message: 'Enter the 6-digit code we sent you.' }),
+  // Phone + OTP creates the account on first use, so it is a sign-up path as
+  // much as a sign-in one and has to carry an invitation the same way.
+  referralCode: referralCode,
   next: internalPath,
 })
 
@@ -62,6 +67,9 @@ const registerSchema = z
       .max(200)
       .optional()
       .or(z.literal('')),
+    // An invitation code from the rewards programme. Optional, and never
+    // allowed to fail a registration - see below.
+    referralCode: referralCode,
     next: internalPath,
   })
   .refine((value) => value.phone || value.email, {
@@ -74,6 +82,23 @@ const locationSchema = z.object({
   label: requiredText('Location name', 120).catch('Current location'),
   source: z.enum(['gps', 'saved', 'chosen', 'default']).catch('chosen'),
 })
+
+/**
+ * Credit whoever invited a brand-new account.
+ *
+ * Best-effort by design, and its outcome is never reported back: a mistyped or
+ * withdrawn invitation must not cost someone their account, and telling a
+ * stranger whether a given code is real would turn the sign-up form into an
+ * oracle for enumerating other people's codes.
+ */
+async function creditInviter(userId: string, code: string | undefined) {
+  if (!code) return
+  try {
+    await attachReferral({ referredUserId: userId, code })
+  } catch (err) {
+    console.error('[rewards] could not attach referral', err)
+  }
+}
 
 async function sessionMeta() {
   const h = await headers()
@@ -125,7 +150,12 @@ export async function verifyOtpAction(_prev: FormState, formData: FormData): Pro
   if (!parsed.ok) return { error: parsed.error }
 
   try {
-    const user = await authenticateWithOtp(parsed.data.phone, parsed.data.code)
+    const { user, created } = await authenticateWithOtp(parsed.data.phone, parsed.data.code)
+
+    // Only on the sign-in that created the account. A returning member was
+    // already part of the network, so nobody introduced them.
+    if (created) await creditInviter(user.id, parsed.data.referralCode)
+
     const token = await createSession(user.id, await sessionMeta())
     await setSessionCookie(token)
   } catch (err) {
@@ -147,6 +177,9 @@ export async function registerAction(_prev: FormState, formData: FormData): Prom
       email: parsed.data.email || null,
       password: parsed.data.password || null,
     })
+
+    await creditInviter(user.id, parsed.data.referralCode)
+
     const token = await createSession(user.id, await sessionMeta())
     await setSessionCookie(token)
   } catch (err) {

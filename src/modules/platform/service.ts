@@ -1,4 +1,4 @@
-import { getSql, databaseDriver } from '@/db/client'
+import { getSql, databaseDriver, type Sql } from '@/db/client'
 import { publish, EVENT } from '@/modules/events/service'
 
 /**
@@ -13,8 +13,13 @@ import { publish, EVENT } from '@/modules/events/service'
 // Settings
 // ---------------------------------------------------------------------------
 
-export async function getSetting<T>(key: string, fallback: T): Promise<T> {
-  const sql = await getSql()
+/**
+ * Pass `tx` when reading configuration from inside a transaction: a settings
+ * lookup on a second connection while one is open is how a caller ends up
+ * waiting on itself.
+ */
+export async function getSetting<T>(key: string, fallback: T, tx?: Sql): Promise<T> {
+  const sql = tx ?? (await getSql())
   const row = await sql.one<{ value: T }>(`SELECT value FROM platform_settings WHERE key = $1`, [
     key,
   ])
