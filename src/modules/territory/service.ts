@@ -71,15 +71,20 @@ export interface ActivityQuery {
 /**
  * How many distinct buyers a cell needs before it can be named.
  *
- * Two is the smallest number that is not one, and one is a person. Kept in the
- * environment rather than hardcoded because it is a policy decision, not an
- * engineering one: a dense launch market can afford a higher floor, and an
- * early pilot may need it relaxed to make the map useful at all. Never below
- * 1, so no configuration can turn this into an address book.
+ * A policy decision, not an engineering one, so it lives in the environment.
+ *
+ * The default is 1 for the pilot: at current density a floor of 2 withholds
+ * every area and the maps come up empty, which makes the feature useless to
+ * the shopkeepers it exists for. The cost is real though - at 1, a quiet
+ * neighbourhood with a single active buyer is named, and in a thin market
+ * that is close to naming the buyer. Raise this to 2 or more once a market
+ * has the density to carry it.
+ *
+ * Never below 1, so no configuration can turn this into an address book.
  */
 export const MIN_ACTORS_PER_CELL = Math.max(
   1,
-  Math.round(Number(process.env.TERRITORY_MIN_ACTORS ?? 2)),
+  Math.round(Number(process.env.TERRITORY_MIN_ACTORS ?? 1)),
 )
 
 /**
